@@ -3,18 +3,18 @@
 //
 // When running the script with `npx hardhat run <script>` you'll find the Hardhat
 // Runtime Environment's members available in the global scope.
-import { CommonsBudgetContract } from "../typechain";
+import { CommonsBudget } from "../typechain";
 
 import { Wallet } from "ethers";
 import { ethers } from "hardhat";
 
 async function main() {
-    const ContractFactory = await ethers.getContractFactory("CommonsBudgetContract");
+    const ContractFactory = await ethers.getContractFactory("CommonsBudget");
 
     const provider_ethnet = ethers.provider;
     const admin = new Wallet(process.env.ADMIN_KEY || "");
     const adminSigner = provider_ethnet.getSigner(admin.address);
-    const contract = (await ContractFactory.connect(adminSigner).deploy()) as CommonsBudgetContract;
+    const contract = (await ContractFactory.connect(adminSigner).deploy()) as CommonsBudget;
     await contract.deployed();
 
     console.log("deployed to:", contract.address);
