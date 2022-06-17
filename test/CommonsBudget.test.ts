@@ -55,10 +55,10 @@ describe("Test of Commons Budget Contract", () => {
     });
 
     it("Send", async () => {
-         await provider.getSigner(admin.address).sendTransaction({
-             to: contract.address,
-             value: amount,
-         });
+        await provider.getSigner(admin.address).sendTransaction({
+            to: contract.address,
+            value: amount,
+        });
     });
 
     it("Check", async () => {
