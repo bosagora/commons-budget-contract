@@ -3,6 +3,7 @@
 pragma solidity >=0.6.0 <0.9.0;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
+import { Clones } from "@openzeppelin/contracts/proxy/Clones.sol";
 import "./IVoteraVote.sol";
 import "./ICommonsBudget.sol";
 
@@ -19,21 +20,9 @@ contract CommonsBudget is Ownable, ICommonsBudget {
         libraryAddress = _libraryAddress;
     }
 
-    // factory pattern
-    function createClone(address target) internal returns (address result) {
-        bytes20 targetBytes = bytes20(target);
-        assembly {
-            let clone := mload(0x40)
-            mstore(clone, 0x3d602d80600a3d3981f3363d3d373d3d3d363d73000000000000000000000000)
-            mstore(add(clone, 0x14), targetBytes)
-            mstore(add(clone, 0x28), 0x5af43d82803e903d91602b57fd5bf30000000000000000000000000000000000)
-            result := create(0, clone, 0x37)
-        }
-    }
-
     function createVote(address _chair, bytes32 _proposalID, address _budget) internal returns (address) {
         require(libraryAddress != address(0) && _chair != address(0), "NotReady");
-        address clone = createClone(libraryAddress);
+        address clone = Clones.clone(libraryAddress);
         IVoteraVote(clone).init(_chair, _proposalID, _budget);
         return clone;
     }

@@ -555,7 +555,7 @@ describe("Test of Commons Budget Contract", () => {
         await voteBudget.voteStarted(proposal);
 
         const proposalData = await voteBudget.getProposalData(proposal);
-        expect(proposalData.cause).equal(2); // NONE
+        expect(proposalData.cause).equal(2); // FEE
     });
 
     it("voteStarted: NotFoundProposal", async () => {
