@@ -108,7 +108,7 @@ describe("Test of Commons Budget Contract", () => {
         expect(await contract.getProposalValues(proposal)).equal(basicFee);
 
         const voteBudget = CommonsBudgetFactory.connect(contract.address, voteChair);
-        const voteAddress = await voteBudget.getProposalVoteAddress(proposal);
+        const voteAddress = (await voteBudget.getProposalData(proposal)).voteAddress;
         expect(voteAddress).not.equal(libraryVoteraVote);
         const voteraVote = VoteraVoteFactory.connect(voteAddress, voteChair);
         expect(await voteraVote.getChair()).equal(voteChair.address);
@@ -218,7 +218,7 @@ describe("Test of Commons Budget Contract", () => {
         expect(await contract.getProposalValues(proposal)).equal(basicFee);
 
         const voteBudget = CommonsBudgetFactory.connect(contract.address, voteChair);
-        const voteAddress = await voteBudget.getProposalVoteAddress(proposal);
+        const voteAddress = (await voteBudget.getProposalData(proposal)).voteAddress;
         expect(voteAddress).not.equal(libraryVoteraVote);
         const voteraVote = VoteraVoteFactory.connect(voteAddress, voteChair);
         expect(await voteraVote.getChair()).equal(voteChair.address);
@@ -435,7 +435,7 @@ describe("Test of Commons Budget Contract", () => {
         await expect(voteBudget.rejectAssess(proposal)).to.be.revertedWith("Delayed");
     });
 
-    it("rejectAssess: Delayed", async () => {
+    it("rejectAssess: RejectedProposal", async () => {
         const blockLatest = await ethers.provider.getBlock("latest");
         const startTime = blockLatest.timestamp + 30000;
         const endTime = startTime + 30000;
@@ -645,5 +645,292 @@ describe("Test of Commons Budget Contract", () => {
         await network.provider.send("evm_mine");
 
         await expect(contract.voteStarted(proposal)).to.be.revertedWith("NotAuthorized");
+    });
+
+    const recordVote = async (voteAddress: string, registerResult: boolean): Promise<number[]> => {
+        const proposalData = await contract.getProposalData(proposal);
+        const startTime = proposalData.start;
+        const endTime = proposalData.end;
+        const openTime = endTime.add(30);
+
+        const voteraVote = VoteraVoteFactory.connect(voteAddress, voteChair);
+        await voteraVote.setupVoteInfo(startTime, endTime, openTime, "info");
+        await voteraVote.addValidators(validators.map((v) => v.address));
+
+        // wait until startTime
+        await network.provider.send("evm_increaseTime", [30000]);
+        await network.provider.send("evm_mine");
+
+        const voteBudget = CommonsBudgetFactory.connect(contract.address, voteChair);
+        await voteBudget.voteStarted(proposal);
+
+        const choices: number[] = [];
+        const nonces: number[] = [];
+        const expectVoteCounts: number[] = [0, 0, 0];
+        const voterCount = validators.length - 1;
+
+        for (let i = 0; i < voterCount; i += 1) {
+            const c = i % 3;
+            choices.push(c);
+            nonces.push(i + 1);
+            expectVoteCounts[c] += 1;
+        }
+
+        let submitBallotTx;
+        for (let i = 0; i < voterCount; i += 1) {
+            const commitment = await makeCommitment(
+                validators[i],
+                voteAddress,
+                validators[i].address,
+                choices[i],
+                nonces[i]
+            );
+            const signature = await signCommitment(
+                voteChair,
+                voteAddress,
+                validators[i].address,
+                commitment
+            );
+
+            const ballotVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            submitBallotTx = await ballotVote.submitBallot(voteAddress, commitment, signature);
+        }
+
+        expect(await voteraVote.ballotCount()).equal(voterCount);
+
+        if (submitBallotTx) {
+            await submitBallotTx.wait();
+        }
+
+        if (!registerResult) {
+            return expectVoteCounts;
+        }
+
+        await network.provider.send("evm_increaseTime", [30000]);
+        await network.provider.send("evm_mine");
+
+        for (let i = 0; i < voterCount; i += 1) {
+            const ballot = await voteraVote.getBallotAtIndex(i);
+            expect(ballot.key).equal(validators[i].address);
+        }
+
+        // wait until openTime
+        await network.provider.send("evm_increaseTime", [30]);
+        await network.provider.send("evm_mine");
+
+        await voteraVote.revealBallot(
+            validators.slice(0, voterCount).map((v) => v.address),
+            choices,
+            nonces
+        );
+        await voteraVote.registerResult();
+
+        return expectVoteCounts;
+    };
+
+    it("votePublished", async () => {
+        const blockLatest = await ethers.provider.getBlock("latest");
+        const startTime = blockLatest.timestamp + 30000;
+        const endTime = startTime + 30000;
+        const docHash = DocHash;
+        const fundAmount = ethers.utils.parseEther("1.0");
+        const proposer = validators[0].address;
+
+        const validatorBudget = CommonsBudgetFactory.connect(contract.address, validators[0]);
+        const makeProposalTx = await validatorBudget.makeFundProposalData(
+            proposal,
+            "FundProposalTitle",
+            startTime,
+            endTime,
+            docHash,
+            fundAmount,
+            proposer,
+            { value: basicFee }
+        );
+        await makeProposalTx.wait();
+
+        const fee = fundAmount.div(10);
+
+        await validatorBudget.payProposalFee(proposal, { value: fee });
+
+        const voteAddress = (await contract.getProposalData(proposal)).voteAddress;
+        const expectVoteCounts = await recordVote(voteAddress, true);
+
+        const voteraVote = VoteraVoteFactory.connect(voteAddress, voteChair);
+        const validatorCount = await voteraVote.getValidatorCount();
+        const voteCounts = await voteraVote.getVoteCounts();
+        for (let i = 0; i < 3; i += 1) {
+            expect(voteCounts[i]).equal(BigNumber.from(expectVoteCounts[i]));
+        }
+
+        const voteBudget = CommonsBudgetFactory.connect(contract.address, voteChair);
+        const votePublishedTx = await voteBudget.votePublished(proposal, validatorCount, voteCounts);
+        await votePublishedTx.wait();
+
+        const proposalData = await contract.getProposalData(proposal);
+        expect(proposalData.validatorSize).equal(validatorCount);
+        for (let i = 0; i < 3; i += 1) {
+            expect(proposalData.voteCounts[i]).equal(voteCounts[i]);
+        }
+    });
+
+    it("votePublished: NotFoundProposal", async () => {
+        const voteBudget = CommonsBudgetFactory.connect(contract.address, voteChair);
+        const validatorCount = 9;
+        const voteCounts = [3, 3, 3];
+        await expect(voteBudget.votePublished(proposal, validatorCount, voteCounts)).to.be.revertedWith("NotFoundProposal");
+    });
+
+    it("votePublished: NotEnd", async () => {
+        const blockLatest = await ethers.provider.getBlock("latest");
+        const startTime = blockLatest.timestamp + 30000;
+        const endTime = startTime + 30000;
+        const docHash = DocHash;
+        const fundAmount = ethers.utils.parseEther("1.0");
+        const proposer = validators[0].address;
+
+        const validatorBudget = CommonsBudgetFactory.connect(contract.address, validators[0]);
+        const makeProposalTx = await validatorBudget.makeFundProposalData(
+            proposal,
+            "FundProposalTitle",
+            startTime,
+            endTime,
+            docHash,
+            fundAmount,
+            proposer,
+            { value: basicFee }
+        );
+        await makeProposalTx.wait();
+
+        const fee = fundAmount.div(10);
+
+        await validatorBudget.payProposalFee(proposal, { value: fee });
+
+        const voteAddress = (await contract.getProposalData(proposal)).voteAddress;
+        const expectVoteCounts = await recordVote(voteAddress, false); //
+        
+        const voteBudget = CommonsBudgetFactory.connect(contract.address, voteChair);
+        const validatorCount = 9;
+        const voteCounts = [3, 3, 3];
+        await expect(voteBudget.votePublished(proposal, validatorCount, voteCounts)).to.be.revertedWith("NotEnd");
+    });
+
+    it("votePublished: RejectedProposal(Score)", async () => {
+        const blockLatest = await ethers.provider.getBlock("latest");
+        const startTime = blockLatest.timestamp + 30000;
+        const endTime = startTime + 30000;
+        const docHash = DocHash;
+        const fundAmount = ethers.utils.parseEther("1.0");
+        const proposer = validators[0].address;
+
+        const validatorBudget = CommonsBudgetFactory.connect(contract.address, validators[0]);
+        const makeProposalTx = await validatorBudget.makeFundProposalData(
+            proposal,
+            "FundProposalTitle",
+            startTime,
+            endTime,
+            docHash,
+            fundAmount,
+            proposer,
+            { value: basicFee }
+        );
+        await makeProposalTx.wait();
+
+        const voteBudget = CommonsBudgetFactory.connect(contract.address, voteChair);
+        await voteBudget.rejectAssess(proposal);
+
+        await network.provider.send("evm_increaseTime", [60000]);
+        await network.provider.send("evm_mine");
+
+        const validatorCount = 9;
+        const voteCounts = [3, 3, 3];
+        await expect(voteBudget.votePublished(proposal, validatorCount, voteCounts)).to.be.revertedWith("RejectedProposal");
+    });
+
+    it("votePublished: NotAuthorized", async () => {
+        const blockLatest = await ethers.provider.getBlock("latest");
+        const startTime = blockLatest.timestamp + 30000;
+        const endTime = startTime + 30000;
+        const docHash = DocHash;
+        const fundAmount = ethers.utils.parseEther("1.0");
+        const proposer = validators[0].address;
+
+        const validatorBudget = CommonsBudgetFactory.connect(contract.address, validators[0]);
+        const makeProposalTx = await validatorBudget.makeFundProposalData(
+            proposal,
+            "FundProposalTitle",
+            startTime,
+            endTime,
+            docHash,
+            fundAmount,
+            proposer,
+            { value: basicFee }
+        );
+        await makeProposalTx.wait();
+
+        const fee = fundAmount.div(10);
+
+        await validatorBudget.payProposalFee(proposal, { value: fee });
+
+        const voteAddress = (await contract.getProposalData(proposal)).voteAddress;
+        const expectVoteCounts = await recordVote(voteAddress, true);
+
+        const voteraVote = VoteraVoteFactory.connect(voteAddress, voteChair);
+        const validatorCount = await voteraVote.getValidatorCount();
+        const voteCounts = await voteraVote.getVoteCounts();
+        for (let i = 0; i < 3; i += 1) {
+            expect(voteCounts[i]).equal(BigNumber.from(expectVoteCounts[i]));
+        }
+
+        await expect(contract.votePublished(proposal, validatorCount, voteCounts)).to.be.revertedWith("NotAuthorized");
+        await expect(validatorBudget.votePublished(proposal, validatorCount, voteCounts)).to.be.revertedWith("NotAuthorized");
+    });
+
+    it("votePublished: InvalidInput", async () => {
+        const blockLatest = await ethers.provider.getBlock("latest");
+        const startTime = blockLatest.timestamp + 30000;
+        const endTime = startTime + 30000;
+        const docHash = DocHash;
+        const fundAmount = ethers.utils.parseEther("1.0");
+        const proposer = validators[0].address;
+
+        const validatorBudget = CommonsBudgetFactory.connect(contract.address, validators[0]);
+        const makeProposalTx = await validatorBudget.makeFundProposalData(
+            proposal,
+            "FundProposalTitle",
+            startTime,
+            endTime,
+            docHash,
+            fundAmount,
+            proposer,
+            { value: basicFee }
+        );
+        await makeProposalTx.wait();
+
+        const fee = fundAmount.div(10);
+
+        await validatorBudget.payProposalFee(proposal, { value: fee });
+
+        const voteAddress = (await contract.getProposalData(proposal)).voteAddress;
+        const expectVoteCounts = await recordVote(voteAddress, true);
+
+        const voteraVote = VoteraVoteFactory.connect(voteAddress, voteChair);
+        const validatorCount = await voteraVote.getValidatorCount();
+        const voteCounts = await voteraVote.getVoteCounts();
+        for (let i = 0; i < 3; i += 1) {
+            expect(voteCounts[i]).equal(BigNumber.from(expectVoteCounts[i]));
+        }
+
+        const voteraBudget = CommonsBudgetFactory.connect(contract.address, voteChair);
+        await expect(voteraBudget.votePublished(proposal, validatorCount.add(1), voteCounts)).to.be.revertedWith("InvalidInput");
+
+        const invalidVoteCountsLength = [3, 3, 3, 0];
+        await expect(voteraBudget.votePublished(proposal, validatorCount, invalidVoteCountsLength)).to.be.revertedWith("InvalidInput");
+
+        const invalidVoteCountsValue = voteCounts.map((v, index) => index === 0 ? v.sub(1) : v);
+        await expect(voteraBudget.votePublished(proposal, validatorCount, invalidVoteCountsValue)).to.be.revertedWith("InvalidInput");
+
+        const votePublishedTx = await voteraBudget.votePublished(proposal, validatorCount, voteCounts);
+        await votePublishedTx.wait();
     });
 });

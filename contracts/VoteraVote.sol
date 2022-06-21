@@ -11,18 +11,6 @@ import "./IVoteraVote.sol";
 // E005 : invalid signature
 
 contract VoteraVote is IVoteraVote {
-    struct VoteInfo {
-        uint64  startVote;
-        uint64  endVote;
-        uint64  openVote;
-        string  info;
-    }
-
-    struct Candidate {
-        uint64  id;
-        uint64  voteCount;
-        string  name;
-    }
 
     struct ValidatorMap {
         address[] keys;
@@ -45,8 +33,12 @@ contract VoteraVote is IVoteraVote {
     address private budget;
 
     // Vote Information
-    VoteInfo public voteInfo;
-    Candidate[] public candidates;
+    uint64  public startVote;
+    uint64  public endVote;
+    uint64  public openVote;
+    string  public info;
+
+    uint64[3] private voteCounts; // 0:BLANK, 1:YES, 2:NO
 
     ValidatorMap private validators;
     VoterMap private voters;
@@ -81,33 +73,27 @@ contract VoteraVote is IVoteraVote {
         require(msg.sender == chair, "E000");
         require(block.timestamp < _startVote, "E001");
         require(0 < _startVote && _startVote < _endVote && _endVote < _openVote, "E001");
-        require(voteInfo.startVote == 0 && voteInfo.openVote == 0, "E002");
+        require(startVote == 0 && openVote == 0, "E002");
 
-        voteInfo = VoteInfo({
-            startVote: _startVote,
-            endVote: _endVote,
-            openVote: _openVote,
-            info: _info
-        });
-
-        candidates.push(Candidate({ id: 0, voteCount: 0, name: "BLANK" }));
-        candidates.push(Candidate({ id: 1, voteCount: 0, name: "YES" }));
-        candidates.push(Candidate({ id: 2, voteCount: 0, name: "NO" }));
+        startVote = _startVote;
+        endVote = _endVote;
+        openVote = _openVote;
+        info = _info;
     }
 
     function changeVoteInfo(uint64 _startVote, uint64 _endVote, uint64 _openVote) public {
         require(msg.sender == chair, "E000");
         require(0 < _startVote && _startVote < _endVote && _endVote < _openVote, "E001");
-        require(block.timestamp < voteInfo.startVote && block.timestamp < _startVote, "E003");
+        require(block.timestamp < startVote && block.timestamp < _startVote, "E003");
 
-        voteInfo.startVote = _startVote;
-        voteInfo.endVote = _endVote;
-        voteInfo.openVote = _openVote;
+        startVote = _startVote;
+        endVote = _endVote;
+        openVote = _openVote;
     }
 
     function addValidators(address[] memory _validators) public {
         require(msg.sender == chair, "E000");
-        require(block.timestamp < voteInfo.startVote, "E003");
+        require(block.timestamp < startVote, "E003");
 
         for (uint i = 0; i < _validators.length; i++) {
             address _validator = _validators[i];
@@ -151,8 +137,8 @@ contract VoteraVote is IVoteraVote {
     function submitBallot(address _vote, bytes memory _commitment, bytes memory _signature) public {
         require(validatorContains(msg.sender), "E000");
         require(_vote == address(this), "E001");
-        require(block.timestamp >= voteInfo.startVote, "E004");
-        require(block.timestamp < voteInfo.endVote, "E003");
+        require(block.timestamp >= startVote, "E004");
+        require(block.timestamp < endVote, "E003");
         verifySubmit(_vote, msg.sender, _commitment, _signature);
 
         if (votersContains(msg.sender)) {
@@ -178,7 +164,7 @@ contract VoteraVote is IVoteraVote {
 
     function getBallotAtIndex(uint _index) public view returns (Ballot memory) {
         require(_index < votersSize(), "E001");
-        require(block.timestamp >= voteInfo.endVote, "E004");
+        require(block.timestamp >= endVote, "E004");
         return voters.values[voters.keys[_index]];
     }
 
@@ -212,7 +198,7 @@ contract VoteraVote is IVoteraVote {
 
     function revealBallot(address[] memory _keys, uint64[] memory _choices, uint64[] memory _nonces) public {
         require(chair == msg.sender, "E000");
-        require(block.timestamp >= voteInfo.openVote, "E004");
+        require(block.timestamp >= openVote, "E004");
         require(_keys.length == _choices.length && _keys.length == _nonces.length, "E001");
         require(!votePublished, "E002");
 
@@ -235,17 +221,17 @@ contract VoteraVote is IVoteraVote {
 
     function registerResult() public {
         require(chair == msg.sender, "E000");
-        require(block.timestamp >= voteInfo.openVote, "E004");
+        require(block.timestamp >= openVote, "E004");
         require(!votePublished && revealCount == votersSize(), "E002");
 
-        for (uint i = 0; i < candidates.length; i++) {
-            candidates[i].voteCount = 0;
+        for (uint i = 0; i < voteCounts.length; i++) {
+            voteCounts[i] = 0;
         }
 
         for (uint i = 0; i < revealCount; i++) {
             uint64 choice = voters.values[voters.keys[i]].choice;
-            if (choice < candidates.length) {
-                candidates[choice].voteCount++;
+            if (choice < voteCounts.length) {
+                voteCounts[choice]++;
             }
         }
 
@@ -254,12 +240,12 @@ contract VoteraVote is IVoteraVote {
     }
 
     function getVoteCounts() external override view returns (uint64[] memory) {
-        require(block.timestamp >= voteInfo.openVote, "E004");
+        require(block.timestamp >= openVote, "E004");
         require(votePublished, "E002");
-        uint64[] memory voteCounts = new uint64[](candidates.length);
-        for (uint i = 0; i < candidates.length; i++) {
-            voteCounts[i] = candidates[i].voteCount;
+        uint64[] memory _voteCounts = new uint64[](voteCounts.length);
+        for (uint i = 0; i < voteCounts.length; i++) {
+            _voteCounts[i] = voteCounts[i];
         }
-        return voteCounts;
+        return _voteCounts;
     }
 }

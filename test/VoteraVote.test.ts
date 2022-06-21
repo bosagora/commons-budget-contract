@@ -71,7 +71,7 @@ describe("VoteraVote", function () {
         );
         await makeProposalTx.wait();
 
-        voteAddress = await budget.getProposalVoteAddress(proposal);
+        voteAddress = (await budget.getProposalData(proposal)).voteAddress;
 
         voteraVote = VoteraVoteFactory.connect(voteAddress, voteChair);
         voteBudget = CommonsBudgetFactory.connect(budget.address, voteChair);
@@ -197,11 +197,6 @@ describe("VoteraVote", function () {
         await votePublishedTx.wait();
 
         displayBalance(voteChair.address, "end_");
-
-        for (let i = 0; i < 3; i += 1) {
-            const candidate = await voteraVote.candidates(i);
-            expect(candidate.voteCount).equal(BigNumber.from(voteCounts[i]));
-        }
 
         const proposalData = await voteBudget.getProposalData(proposal);
         expect(proposalData.validatorSize).equal(validatorCount);

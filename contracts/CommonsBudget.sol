@@ -77,13 +77,8 @@ contract CommonsBudget is Ownable, ICommonsBudget {
         }
     }
 
-    function makeSystemProposalData(bytes32 _proposalID, string memory _title, uint64 _start, uint64 _end, bytes32 _docHash) public payable {
-        require(msg.value > 0, "InvalidFee");
-        require(!proposalExists(_proposalID), "DuplicatedProposal");
-        require(block.timestamp < _start && _start < _end, "InvalidInput");
-        // TODO: add policy for system proposal fee
-
-        proposalMaps[_proposalID].proposalType = ProposalType.SYSTEM;
+    function saveProposalData(ProposalType _proposalType, bytes32 _proposalID, string memory _title, uint64 _start, uint64 _end, bytes32 _docHash) private {
+        proposalMaps[_proposalID].proposalType = _proposalType;
         proposalMaps[_proposalID].title = _title;
         proposalMaps[_proposalID].start = _start;
         proposalMaps[_proposalID].end = _end;
@@ -92,6 +87,15 @@ contract CommonsBudget is Ownable, ICommonsBudget {
 
         feeMaps[_proposalID].values[msg.sender] = msg.value;
         feeMaps[_proposalID].payers.push(msg.sender);
+    }
+
+    function makeSystemProposalData(bytes32 _proposalID, string memory _title, uint64 _start, uint64 _end, bytes32 _docHash) public payable {
+        require(msg.value > 0, "InvalidFee");
+        require(!proposalExists(_proposalID), "DuplicatedProposal");
+        require(block.timestamp < _start && _start < _end, "InvalidInput");
+        // TODO: add policy for system proposal fee
+
+        saveProposalData(ProposalType.SYSTEM, _proposalID, _title, _start, _end, _docHash);
     }
 
     function makeFundProposalData(bytes32 _proposalID, string memory _title, uint64 _start, uint64 _end, bytes32 _docHash, uint _amount, address _proposer) public payable {
@@ -100,29 +104,19 @@ contract CommonsBudget is Ownable, ICommonsBudget {
         require(block.timestamp < _start && _start < _end, "InvalidInput");
         // TODO: add policy for fund proposal fee
 
-        proposalMaps[_proposalID].proposalType = ProposalType.FUND;
-        proposalMaps[_proposalID].title = _title;
-        proposalMaps[_proposalID].start = _start;
-        proposalMaps[_proposalID].end = _end;
-        proposalMaps[_proposalID].docHash = _docHash;
+        saveProposalData(ProposalType.FUND, _proposalID, _title, _start, _end, _docHash);
+
         proposalMaps[_proposalID].fundAmount = _amount;
         proposalMaps[_proposalID].proposer = _proposer;
-        proposalMaps[_proposalID].voteAddress = createVote(voteChair, _proposalID, address(this));
-
-        feeMaps[_proposalID].values[msg.sender] = msg.value;
-        feeMaps[_proposalID].payers.push(msg.sender);
-    }
-
-    function checkProposalForPublishing(bytes32 _proposalID) private view {
-        require(block.timestamp >= proposalMaps[_proposalID].end, "NotEnd");
-        require(!proposalMaps[_proposalID].rejected, "RejectedProposal");
     }
 
     // Called by VoteraVote chair
     function votePublished(bytes32 proposalID, uint validatorSize, uint64[] calldata voteCounts) external override {
         address voteAddress = proposalMaps[proposalID].voteAddress;
         require(voteAddress != address(0), "NotFoundProposal");
-        checkProposalForPublishing(proposalID);
+        
+        require(block.timestamp >= proposalMaps[proposalID].end, "NotEnd");
+        require(!proposalMaps[proposalID].rejected, "RejectedProposal");
 
         IVoteraVote voteraVote = IVoteraVote(voteAddress);
 
@@ -142,35 +136,29 @@ contract CommonsBudget is Ownable, ICommonsBudget {
         proposalMaps[proposalID].voteCounts = voteCounts;
     }
 
-    function checkProposalForAssessReject(bytes32 _proposalID) private view {
-        require(proposalMaps[_proposalID].proposalType == ProposalType.FUND, "NotFundProposal");
-        require(block.timestamp < proposalMaps[_proposalID].start, "Delayed");
-        require(!proposalMaps[_proposalID].rejected, "RejectedProposal");
-    }
-
     // Called by VoteraVote chair
-    function rejectAssess(bytes32 _proposalID) public {
-        address voteAddress = proposalMaps[_proposalID].voteAddress;
+    function rejectAssess(bytes32 proposalID) public {
+        address voteAddress = proposalMaps[proposalID].voteAddress;
         require(voteAddress != address(0), "NotFoundProposal");
-        checkProposalForAssessReject(_proposalID);
+
+        require(proposalMaps[proposalID].proposalType == ProposalType.FUND, "NotFundProposal");
+        require(block.timestamp < proposalMaps[proposalID].start, "Delayed");
+        require(!proposalMaps[proposalID].rejected, "RejectedProposal");
 
         IVoteraVote voteraVote = IVoteraVote(voteAddress);
         require(msg.sender == voteraVote.getChair(), "NotAuthorized");
 
-        proposalMaps[_proposalID].rejected = true;
-        proposalMaps[_proposalID].cause = RejectedCause.SCORE;
-    }
-
-    function checkProposalForStart(bytes32 _proposalID) private view {
-        require(block.timestamp >= proposalMaps[_proposalID].start, "TooEarly");
-        require(!proposalMaps[_proposalID].rejected, "RejectedProposal");
+        proposalMaps[proposalID].rejected = true;
+        proposalMaps[proposalID].cause = RejectedCause.SCORE;
     }
 
     // Called by VoteraVote chair
     function voteStarted(bytes32 proposalID) external override {
         address voteAddress = proposalMaps[proposalID].voteAddress;
         require(voteAddress != address(0), "NotFoundProposal");
-        checkProposalForStart(proposalID);
+
+        require(block.timestamp >= proposalMaps[proposalID].start, "TooEarly");
+        require(!proposalMaps[proposalID].rejected, "RejectedProposal");
 
         IVoteraVote voteraVote = IVoteraVote(voteAddress);
         require(msg.sender == voteraVote.getChair(), "NotAuthorized");
@@ -195,10 +183,6 @@ contract CommonsBudget is Ownable, ICommonsBudget {
             value += feeMaps[_proposalID].values[_payer];
         }
         return value;
-    }
-
-    function getProposalVoteAddress(bytes32 _proposalID) public view returns (address) {
-        return proposalMaps[_proposalID].voteAddress;
     }
 
     function getProposalData(bytes32 _proposalID) public view returns (ProposalData memory) {
