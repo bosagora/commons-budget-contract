@@ -83,16 +83,6 @@ contract VoteraVote is IVoteraVote {
         info = _info;
     }
 
-    function changeVoteInfo(uint64 _startVote, uint64 _endVote, uint64 _openVote) public {
-        require(msg.sender == chair, "E000");
-        require(0 < _startVote && _startVote < _endVote && _endVote < _openVote, "E001");
-        require(block.timestamp < startVote && block.timestamp < _startVote, "E003");
-
-        startVote = _startVote;
-        endVote = _endVote;
-        openVote = _openVote;
-    }
-
     function addValidators(address[] memory _validators) public {
         require(msg.sender == chair, "E000");
         require(block.timestamp < startVote, "E003");
