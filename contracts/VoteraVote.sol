@@ -200,7 +200,7 @@ contract VoteraVote is IVoteraVote {
         require(chair == msg.sender, "E000");
         require(block.timestamp >= openVote, "E004");
         require(_keys.length == _choices.length && _keys.length == _nonces.length, "E001");
-        require(!votePublished, "E002");
+        require(!votePublished && openVote > 0, "E002");
 
         address vote = address(this);
 
@@ -222,7 +222,7 @@ contract VoteraVote is IVoteraVote {
     function registerResult() public {
         require(chair == msg.sender, "E000");
         require(block.timestamp >= openVote, "E004");
-        require(!votePublished && revealCount == votersSize(), "E002");
+        require(!votePublished && openVote > 0 && revealCount == votersSize(), "E002");
 
         for (uint i = 0; i < voteCounts.length; i++) {
             voteCounts[i] = 0;
@@ -241,7 +241,7 @@ contract VoteraVote is IVoteraVote {
 
     function getVoteCounts() external override view returns (uint64[] memory) {
         require(block.timestamp >= openVote, "E004");
-        require(votePublished, "E002");
+        require(votePublished && openVote > 0, "E002");
         uint64[] memory _voteCounts = new uint64[](voteCounts.length);
         for (uint i = 0; i < voteCounts.length; i++) {
             _voteCounts[i] = voteCounts[i];
