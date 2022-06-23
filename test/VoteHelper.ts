@@ -17,7 +17,7 @@ export function makeCommitment(
 ): Promise<string> {
     const abiCoder = ethers.utils.defaultAbiCoder;
     const encodedResult = abiCoder.encode(
-        ["address", "address", "uint64", "uint64"],
+        ["address", "address", "uint8", "uint64"],
         [vote, sender, choice, nonce]
     );
     const sig = signer

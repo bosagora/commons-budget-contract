@@ -17,9 +17,11 @@ contract VoteraVote is IVoteraVote {
         mapping(address => address) values;
     }
 
+    enum VoteCandidate { BLANK, YES, NO }
+
     struct Ballot {
         address key;
-        uint64 choice;
+        VoteCandidate choice;
         uint64 nonce;
         bytes commitment;
     }
@@ -38,7 +40,7 @@ contract VoteraVote is IVoteraVote {
     uint64  public openVote;
     string  public info;
 
-    uint64[3] private voteCounts; // 0:BLANK, 1:YES, 2:NO
+    uint64[3] private voteCounts;
 
     ValidatorMap private validators;
     VoterMap private voters;
@@ -147,7 +149,7 @@ contract VoteraVote is IVoteraVote {
             voters.values[msg.sender] = Ballot({
                 key: msg.sender,
                 commitment: _commitment,
-                choice: 0,
+                choice: VoteCandidate.BLANK,
                 nonce: 0
             });
             voters.keys.push(msg.sender);
@@ -186,7 +188,7 @@ contract VoteraVote is IVoteraVote {
         }
     }
 
-    function verifyReveal(address _vote, address _sender, uint64 _choice, uint64 _nonce, bytes memory _commitment) private pure {
+    function verifyReveal(address _vote, address _sender, VoteCandidate _choice, uint64 _nonce, bytes memory _commitment) private pure {
         bytes32 dataHash = keccak256(abi.encode(_vote, _sender, _choice, _nonce));
         uint8 v;
         bytes32 r;
@@ -196,7 +198,7 @@ contract VoteraVote is IVoteraVote {
         require(recover == _sender, "E001");
     }
 
-    function revealBallot(address[] memory _keys, uint64[] memory _choices, uint64[] memory _nonces) public {
+    function revealBallot(address[] memory _keys, VoteCandidate[] memory _choices, uint64[] memory _nonces) public {
         require(chair == msg.sender, "E000");
         require(block.timestamp >= openVote, "E004");
         require(_keys.length == _choices.length && _keys.length == _nonces.length, "E001");
@@ -229,9 +231,9 @@ contract VoteraVote is IVoteraVote {
         }
 
         for (uint i = 0; i < revealCount; i++) {
-            uint64 choice = voters.values[voters.keys[i]].choice;
-            if (choice < voteCounts.length) {
-                voteCounts[choice]++;
+            VoteCandidate choice = voters.values[voters.keys[i]].choice;
+            if (choice <= VoteCandidate.NO) {
+                voteCounts[uint(choice)]++;
             }
         }
 
