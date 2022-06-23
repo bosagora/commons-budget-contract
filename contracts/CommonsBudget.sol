@@ -61,10 +61,6 @@ contract CommonsBudget is Ownable, ICommonsBudget {
         return proposalMaps[_proposalID].voteAddress != address(0);
     }
 
-    function proposalNotStarted(bytes32 _proposalID) private view returns (bool) {
-        return block.timestamp < proposalMaps[_proposalID].start;
-    }
-
     function payProposalFee(bytes32 _proposalID) public payable {
         require(msg.value > 0, "InvalidFee");
         require(proposalExists(_proposalID), "NotFoundProposal");
