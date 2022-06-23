@@ -14,19 +14,6 @@ contract CommonsBudget is Ownable, ICommonsBudget {
     address public voteChair;
     address public libraryAddress;
 
-    function changeVoteParam(address _voteChair, address _libraryAddress) public onlyOwner {
-        require(_voteChair != address(0) && _libraryAddress != address(0), "InvalidInput");
-        voteChair = _voteChair;
-        libraryAddress = _libraryAddress;
-    }
-
-    function createVote(address _chair, bytes32 _proposalID, address _budget) internal returns (address) {
-        require(libraryAddress != address(0) && _chair != address(0), "NotReady");
-        address clone = Clones.clone(libraryAddress);
-        IVoteraVote(clone).init(_chair, _proposalID, _budget);
-        return clone;
-    }
-
     enum ProposalType { SYSTEM, FUND }
     enum RejectedCause { NONE, SCORE, FEE }
 
@@ -56,6 +43,19 @@ contract CommonsBudget is Ownable, ICommonsBudget {
 
     mapping(bytes32 => ProposalFeeData) private feeMaps;
     mapping(bytes32 => ProposalData) private proposalMaps;
+
+    function changeVoteParam(address _voteChair, address _libraryAddress) public onlyOwner {
+        require(_voteChair != address(0) && _libraryAddress != address(0), "InvalidInput");
+        voteChair = _voteChair;
+        libraryAddress = _libraryAddress;
+    }
+
+    function createVote(address _chair, bytes32 _proposalID, address _budget) internal returns (address) {
+        require(libraryAddress != address(0) && _chair != address(0), "NotReady");
+        address clone = Clones.clone(libraryAddress);
+        IVoteraVote(clone).init(_chair, _proposalID, _budget);
+        return clone;
+    }
 
     function proposalExists(bytes32 _proposalID) private view returns (bool) {
         return proposalMaps[_proposalID].voteAddress != address(0);
