@@ -95,17 +95,27 @@ describe("Test of Commons Budget Contract", () => {
         assert.deepStrictEqual(factor, 200000);
     });
 
-    it("changeVoteParam: only owner can invoke", async () => {
+    it("changeVoteParam", async () => {
+        const CommonsBudgetFactory = await ethers.getContractFactory("CommonsBudget");
+        const testContract = (await CommonsBudgetFactory.deploy()) as CommonsBudget;
+        await testContract.deployed();
+
+        await testContract.changeVoteParam(admin.address, contract.address);
+        expect(await testContract.voteChair()).equal(admin.address);
+        expect(await testContract.libraryAddress()).equal(contract.address);
+    });
+
+    it("changeVoteParam: Ownable: caller is not the owner", async () => {
         const voteBudget = CommonsBudgetFactory.connect(contract.address, voteChair);
         await expect(voteBudget.changeVoteParam(validators[0].address, libraryVoteraVote)).to.be.revertedWith("Ownable: caller is not the owner");
     });
 
-    it("changeVoteParam: invalid input", async () => {
+    it("changeVoteParam: InvalidInput", async () => {
         await expect(contract.changeVoteParam(AddressZero, libraryVoteraVote)).to.be.revertedWith("InvalidInput");
         await expect(contract.changeVoteParam(voteChair.address, AddressZero)).to.be.revertedWith("InvalidInput");
     });
 
-    it("makeSystemProposalData: System Proposal Data creation", async () => {
+    it("makeSystemProposalData", async () => {
         const blockLatest = await ethers.provider.getBlock("latest");
         const startTime = blockLatest.timestamp + 30000;
         const endTime = startTime + 30000;
@@ -144,7 +154,7 @@ describe("Test of Commons Budget Contract", () => {
         expect(await voteraVote.proposalID()).equal(proposal);
     });
 
-    it("makeSystemProposalData: check fee", async () => {
+    it("makeSystemProposalData: InvalidFee", async () => {
         const blockLatest = await ethers.provider.getBlock("latest");
         const startTime = blockLatest.timestamp + 30000;
         const endTime = startTime + 30000;
@@ -160,7 +170,7 @@ describe("Test of Commons Budget Contract", () => {
         )).to.be.revertedWith("InvalidFee");
     });
 
-    it("makeSystemProposalData: Invalid input date", async () => {
+    it("makeSystemProposalData: InvalidInput", async () => {
         const blockLatest = await ethers.provider.getBlock("latest");
         const startTime = blockLatest.timestamp + 30000;
         const endTime = startTime + 30000;
@@ -185,7 +195,7 @@ describe("Test of Commons Budget Contract", () => {
         )).to.be.revertedWith("InvalidInput");
     });
 
-    it("makeSystemProposalData: check duplicated proposal", async () => {
+    it("makeSystemProposalData: DuplicatedProposal", async () => {
         const blockLatest = await ethers.provider.getBlock("latest");
         const startTime = blockLatest.timestamp + 30000;
         const endTime = startTime + 30000;
@@ -211,7 +221,28 @@ describe("Test of Commons Budget Contract", () => {
         )).to.be.revertedWith("DuplicatedProposal");
     });
 
-    it("makeFundProposalData: Fund Proposal Data creation", async () => {
+    it("makeSystemProposalData: NotReady", async () => {
+        const Factory = await ethers.getContractFactory("CommonsBudget");
+        const testContract = (await Factory.deploy()) as CommonsBudget;
+        await testContract.deployed();
+
+        const blockLatest = await ethers.provider.getBlock("latest");
+        const startTime = blockLatest.timestamp + 30000;
+        const endTime = startTime + 30000;
+        const docHash = DocHash;
+
+        const validatorBudget = CommonsBudgetFactory.connect(testContract.address, validators[0]);
+        await expect(validatorBudget.makeSystemProposalData(
+            proposal,
+            "SystemProposalTitle",
+            startTime,
+            endTime,
+            docHash,
+            { value: basicFee }
+        )).to.be.revertedWith("NotReady");
+    });
+
+    it("makeFundProposalData", async () => {
         const blockLatest = await ethers.provider.getBlock("latest");
         const startTime = blockLatest.timestamp + 30000;
         const endTime = startTime + 30000;
@@ -254,7 +285,7 @@ describe("Test of Commons Budget Contract", () => {
         expect(await voteraVote.proposalID()).equal(proposal);
     });
 
-    it("makeFundProposalData: check fee", async () => {
+    it("makeFundProposalData: InvalidFee", async () => {
         const blockLatest = await ethers.provider.getBlock("latest");
         const startTime = blockLatest.timestamp + 30000;
         const endTime = startTime + 30000;
@@ -274,7 +305,7 @@ describe("Test of Commons Budget Contract", () => {
         )).to.be.revertedWith("InvalidFee");
     });
 
-    it("makeFundProposalData: Invalid input date", async () => {
+    it("makeFundProposalData: InvalidInput", async () => {
         const blockLatest = await ethers.provider.getBlock("latest");
         const startTime = blockLatest.timestamp + 30000;
         const endTime = startTime + 30000;
@@ -306,7 +337,7 @@ describe("Test of Commons Budget Contract", () => {
         )).to.be.revertedWith("InvalidInput");
     });
 
-    it("makeFundProposalData: check duplicated proposal", async () => {
+    it("makeFundProposalData: DuplicatedProposal", async () => {
         const blockLatest = await ethers.provider.getBlock("latest");
         const startTime = blockLatest.timestamp + 30000;
         const endTime = startTime + 30000;
@@ -338,7 +369,32 @@ describe("Test of Commons Budget Contract", () => {
         )).to.be.revertedWith("DuplicatedProposal");
     });
 
-    it("payProposalFee: pay for proposal", async () => {
+    it("makeFundProposalData: NotReady", async () => {
+        const Factory = await ethers.getContractFactory("CommonsBudget");
+        const testContract = (await Factory.deploy()) as CommonsBudget;
+        await testContract.deployed();
+
+        const blockLatest = await ethers.provider.getBlock("latest");
+        const startTime = blockLatest.timestamp + 30000;
+        const endTime = startTime + 30000;
+        const docHash = DocHash;
+        const fundAmount = ethers.utils.parseEther("1.0");
+        const proposer = validators[0].address;
+
+        const validatorBudget = CommonsBudgetFactory.connect(testContract.address, validators[0]);
+        await expect(validatorBudget.makeFundProposalData(
+            proposal,
+            "FundProposalTitle",
+            startTime,
+            endTime,
+            docHash,
+            fundAmount,
+            proposer,
+            { value: basicFee }
+        )).to.be.revertedWith("NotReady");
+    });
+
+    it("payProposalFee", async () => {
         const blockLatest = await ethers.provider.getBlock("latest");
         const startTime = blockLatest.timestamp + 30000;
         const endTime = startTime + 30000;
@@ -370,7 +426,7 @@ describe("Test of Commons Budget Contract", () => {
         expect(await validatorBudget.getProposalValues(proposal)).equal(payAmount.add(payAmount).add(basicFee));
     });
 
-    it("payProposalFee: invalid fee", async () => {
+    it("payProposalFee: InvalidFee", async () => {
         const validatorBudget = CommonsBudgetFactory.connect(contract.address, validators[0]);
         await expect(validatorBudget.payProposalFee(proposal)).to.be.revertedWith("InvalidFee");
     });

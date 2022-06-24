@@ -98,10 +98,10 @@ contract CommonsBudget is Ownable, ICommonsBudget {
         libraryAddress = _libraryAddress;
     }
 
-    function createVote(address _chair, bytes32 _proposalID, address _budget) internal returns (address) {
-        require(libraryAddress != address(0) && _chair != address(0), "NotReady");
+    function createVote(bytes32 _proposalID) internal returns (address) {
+        require(libraryAddress != address(0) && voteChair != address(0), "NotReady");
         address clone = Clones.clone(libraryAddress);
-        IVoteraVote(clone).init(_chair, _proposalID, _budget);
+        IVoteraVote(clone).init(voteChair, _proposalID, address(this));
         return clone;
     }
 
@@ -127,7 +127,7 @@ contract CommonsBudget is Ownable, ICommonsBudget {
         proposalMaps[_proposalID].start = _start;
         proposalMaps[_proposalID].end = _end;
         proposalMaps[_proposalID].docHash = _docHash;
-        proposalMaps[_proposalID].voteAddress = createVote(voteChair, _proposalID, address(this));
+        proposalMaps[_proposalID].voteAddress = createVote(_proposalID);
 
         feeMaps[_proposalID].values[msg.sender] = msg.value;
         feeMaps[_proposalID].payers.push(msg.sender);
