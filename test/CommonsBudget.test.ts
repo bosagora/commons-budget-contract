@@ -84,6 +84,17 @@ describe("Test of Commons Budget Contract", () => {
         assert.deepStrictEqual(systemProposalFe.toString(), "500000000000000000000");
     });
 
+    it("Check Quorum Factor", async () => {
+        const factor = await contract.getVoteQuorumFactor();
+        assert.deepStrictEqual(factor, 333333);
+    });
+
+    it("Set Quorum Factor", async () => {
+        await contract.connect(admin_signer).setVoteQuorumFactor(200000);
+        const factor = await contract.getVoteQuorumFactor();
+        assert.deepStrictEqual(factor, 200000);
+    });
+
     it("changeVoteParam: only owner can invoke", async () => {
         const voteBudget = CommonsBudgetFactory.connect(contract.address, voteChair);
         await expect(voteBudget.changeVoteParam(validators[0].address, libraryVoteraVote)).to.be.revertedWith("Ownable: caller is not the owner");
