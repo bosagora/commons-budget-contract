@@ -101,7 +101,8 @@ contract CommonsBudget is Ownable, IERC165, ICommonsBudget {
     enum ProposalStates {
         INVALID, // Not exist data
         CREATED, // Created
-        FINISHED // The Vote contract has already notified this contract that the vote has ended
+        FINISHED, // The Vote contract has already notified this contract that the vote has ended
+        REJECTED // proposal rejected by assess before vote
     }
 
     struct ProposalFeeData {
@@ -119,6 +120,8 @@ contract CommonsBudget is Ownable, IERC165, ICommonsBudget {
         bytes32 docHash;
         uint256 fundAmount;
         address proposer;
+        uint256 assessParticipantSize;
+        uint64[] assessResult;
         uint256 validatorSize;
         uint64[] voteResult;
         address voteAddress;
@@ -140,6 +143,17 @@ contract CommonsBudget is Ownable, IERC165, ICommonsBudget {
     modifier onlyNotFinishedProposal(bytes32 _proposalID) {
         require(proposalMaps[_proposalID].state != ProposalStates.INVALID, "NotExistProposal");
         require(proposalMaps[_proposalID].state != ProposalStates.FINISHED, "AlreadyFinishedProposal");
+        require(proposalMaps[_proposalID].state != ProposalStates.REJECTED, "RejectedProposal");
+        _;
+    }
+
+    modifier onlyBusinessProposal(bytes32 _proposalID) {
+        require(proposalMaps[_proposalID].proposalType == ProposalType.FUND, "InvalidProposal");
+        _;
+    }
+
+    modifier onlyBeforeStartProposal(bytes32 _proposalID) {
+        require(block.timestamp < proposalMaps[_proposalID].start, "TooLate");
         _;
     }
 
@@ -198,8 +212,6 @@ contract CommonsBudget is Ownable, IERC165, ICommonsBudget {
 
         feeMaps[_proposalID].value = msg.value;
         feeMaps[_proposalID].payer = msg.sender;
-
-        proposalMaps[_proposalID].voteAddress = initVote(_proposalID, _start, _end);
     }
 
     /// @notice create system proposal
@@ -224,6 +236,8 @@ contract CommonsBudget is Ownable, IERC165, ICommonsBudget {
         require(ECDSA.recover(dataHash, _signature) == voteManager, "InvalidInput");
 
         saveProposalData(ProposalType.SYSTEM, _proposalID, _title, _start, _end, _docHash, 0, msg.sender);
+
+        proposalMaps[_proposalID].voteAddress = initVote(_proposalID, _start, _end);
     }
 
     /// @notice create fund proposal
@@ -254,6 +268,38 @@ contract CommonsBudget is Ownable, IERC165, ICommonsBudget {
         require(ECDSA.recover(dataHash, _signature) == voteManager, "InvalidInput");
 
         saveProposalData(ProposalType.FUND, _proposalID, _title, _start, _end, _docHash, _amount, _proposer);
+    }
+
+    /// @notice save assess result of proposal
+    /// @dev this is called by vote manager
+    /// @param _proposalID id of proposal
+    /// @param _assessParticipantSize size of assess participant
+    /// @param _assessResult result of assess
+    /// @param _passed result of assess
+    function saveAssessResult(
+        bytes32 _proposalID,
+        uint256 _assessParticipantSize,
+        uint64[] calldata _assessResult,
+        bool _passed
+    )
+        external
+        override
+        onlyVoteManager
+        onlyNotFinishedProposal(_proposalID)
+        onlyBusinessProposal(_proposalID)
+        onlyBeforeStartProposal(_proposalID)
+    {
+        proposalMaps[_proposalID].assessParticipantSize = _assessParticipantSize;
+        proposalMaps[_proposalID].assessResult = _assessResult;
+        if (_passed) {
+            proposalMaps[_proposalID].voteAddress = initVote(
+                _proposalID,
+                proposalMaps[_proposalID].start,
+                proposalMaps[_proposalID].end
+            );
+        } else {
+            proposalMaps[_proposalID].state = ProposalStates.REJECTED;
+        }
     }
 
     /// @notice notify that vote is finished

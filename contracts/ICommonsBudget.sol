@@ -39,6 +39,19 @@ interface ICommonsBudget {
         bytes calldata signature
     ) external payable;
 
+    /// @notice save assess result of proposal
+    /// @dev this is called by vote manager
+    /// @param proposalID id of proposal
+    /// @param assessParticipantSize size of assess participant
+    /// @param assessResult result of assess
+    /// @param passed result of assess
+    function saveAssessResult(
+        bytes32 proposalID,
+        uint256 assessParticipantSize,
+        uint64[] calldata assessResult,
+        bool passed
+    ) external;
+
     /// @notice notify that vote is finished
     /// @dev this is called by vote manager
     /// @param proposalID id of proposal
