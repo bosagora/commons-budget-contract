@@ -18,22 +18,27 @@ contract VoteraVote is Ownable, IVoteraVote {
     enum VoteState {
         INVALID,
         CREATED,
+        SETTING,
+        ASSESSING,
         RUNNING,
         FINISHED
     }
 
     struct VoteInfo {
         VoteState state;
+        VoteType voteType;
         address commonsBudgetAddress;
+        uint64 startAssess;
+        uint64 endAssess;
         uint64 startVote;
         uint64 endVote;
         uint64 openVote;
         string info;
         uint64[] voteResult;
+        uint64[] assessResult;
     }
 
     struct ValidatorMap {
-        ValidatorListState state;
         address[] keys;
         mapping(address => bool) values;
     }
@@ -53,6 +58,9 @@ contract VoteraVote is Ownable, IVoteraVote {
     struct BallotMap {
         address[] keys;
         mapping(address => Ballot) values;
+        uint256 revealCount;
+        address[] assessKeys;
+        mapping(address => uint64[]) assessValues;
     }
 
     address public commonsBudgetAddress;
@@ -60,7 +68,6 @@ contract VoteraVote is Ownable, IVoteraVote {
     mapping(bytes32 => VoteInfo) public voteInfos;
     mapping(bytes32 => ValidatorMap) private validators;
     mapping(bytes32 => BallotMap) private ballots;
-    mapping(bytes32 => uint256) private revealCounts;
 
     event VoteResultPublished(bytes32 _proposalID);
 
@@ -80,12 +87,18 @@ contract VoteraVote is Ownable, IVoteraVote {
     /// @notice initialize vote
     /// @dev this is called by commons budget contract
     /// @param _proposalID id of proposal
+    /// @param _voteType type of vote
     /// @param _startVote vote starting time (seconds since the epoch)
     /// @param _endVote vote ending time (seconds since the epoch)
+    /// @param _startAssess assess starting time (seconds since the epoch)
+    /// @param _endAssess assess ending time (seconds since the epoch)
     function init(
         bytes32 _proposalID,
+        VoteType _voteType,
         uint64 _startVote,
-        uint64 _endVote
+        uint64 _endVote,
+        uint64 _startAssess,
+        uint64 _endAssess
     ) external override {
         require(msg.sender == commonsBudgetAddress, "E000");
         require(
@@ -94,11 +107,22 @@ contract VoteraVote is Ownable, IVoteraVote {
             "E001"
         );
         require(block.timestamp < _startVote && _startVote < _endVote, "E001");
+        if (_voteType == VoteType.FUND) {
+            require(block.timestamp < _endAssess && _startAssess < _endAssess && _endAssess < _startVote, "E001");
+        }
 
         voteInfos[_proposalID].state = VoteState.CREATED;
+        voteInfos[_proposalID].voteType = _voteType;
         voteInfos[_proposalID].commonsBudgetAddress = commonsBudgetAddress;
         voteInfos[_proposalID].startVote = _startVote;
         voteInfos[_proposalID].endVote = _endVote;
+        voteInfos[_proposalID].startAssess = _startAssess;
+        voteInfos[_proposalID].endAssess = _endAssess;
+    }
+
+    function onlyVoteWithState(bytes32 _proposalID, VoteState state) private view {
+        require(voteInfos[_proposalID].state != VoteState.INVALID, "E001");
+        require(voteInfos[_proposalID].state == state, "E002");
     }
 
     /// @notice set additional vote information
@@ -114,17 +138,22 @@ contract VoteraVote is Ownable, IVoteraVote {
         uint64 _openVote,
         string memory _info
     ) public onlyOwner {
-        require(isExistProposal(_proposalID), "E001");
+        onlyVoteWithState(_proposalID, VoteState.CREATED);
         require(block.timestamp < _startVote, "E001");
-        require(0 < _startVote && _startVote < _endVote && _endVote < _openVote, "E001");
-        require(voteInfos[_proposalID].state == VoteState.CREATED, "E002");
         require(voteInfos[_proposalID].startVote == _startVote && voteInfos[_proposalID].endVote == _endVote, "E002");
+        require(_endVote < _openVote, "E001");
 
-        voteInfos[_proposalID].state = VoteState.RUNNING;
+        voteInfos[_proposalID].state = VoteState.SETTING;
         voteInfos[_proposalID].openVote = _openVote;
         voteInfos[_proposalID].info = _info;
+    }
 
-        validators[_proposalID].state = ValidatorListState.SETTING;
+    /// @notice check whether registered validator of proposal
+    /// @param _proposalID id of proposal
+    /// @param _address check address
+    /// @return returns true if address is validator or false
+    function isContainValidator(bytes32 _proposalID, address _address) public view returns (bool) {
+        return validators[_proposalID].values[_address];
     }
 
     /// @notice add validator
@@ -136,9 +165,7 @@ contract VoteraVote is Ownable, IVoteraVote {
         address[] calldata _validators,
         bool _finalized
     ) external onlyOwner {
-        require(isExistProposal(_proposalID), "E001");
-        require(voteInfos[_proposalID].state == VoteState.RUNNING, "E002");
-        require(validators[_proposalID].state == ValidatorListState.SETTING, "E002");
+        onlyVoteWithState(_proposalID, VoteState.SETTING);
         require(block.timestamp < voteInfos[_proposalID].startVote, "E003");
 
         uint256 len = _validators.length;
@@ -151,48 +178,10 @@ contract VoteraVote is Ownable, IVoteraVote {
         }
 
         if (_finalized) {
-            validators[_proposalID].state = ValidatorListState.FINALIZED;
+            voteInfos[_proposalID].state = voteInfos[_proposalID].voteType == VoteType.SYSTEM
+                ? VoteState.RUNNING
+                : VoteState.ASSESSING;
         }
-    }
-
-    /// @notice get validators for the proposal
-    /// @param _proposalID id of proposal
-    /// @return addresses of the validators
-    function getValidators(bytes32 _proposalID) external view override returns (address[] memory) {
-        return validators[_proposalID].keys;
-    }
-
-    function isExistProposal(bytes32 _proposalID) private view returns (bool) {
-        return voteInfos[_proposalID].state != VoteState.INVALID;
-    }
-
-    /// @notice check whether registered validator of proposal
-    /// @param _proposalID id of proposal
-    /// @param _address check address
-    /// @return returns true if address is validator or false
-    function isContainValidator(bytes32 _proposalID, address _address) public view returns (bool) {
-        return validators[_proposalID].values[_address];
-    }
-
-    /// @notice get count of ballot
-    /// @param _proposalID id of proposal
-    /// @return returns the count of ballot of vote
-    function getBallotCount(bytes32 _proposalID) public view returns (uint256) {
-        return ballots[_proposalID].keys.length;
-    }
-
-    /// @notice check whether ballot is exist or not
-    /// @param _proposalID id of proposal
-    /// @param _address address of validator
-    /// @return returns true if found ballot, or false
-    function isContainBallot(bytes32 _proposalID, address _address) public view returns (bool) {
-        return ballots[_proposalID].values[_address].key == _address;
-    }
-
-    /// @notice get validator list state
-    /// @return returns the state of validator list
-    function getValidatorListState(bytes32 _proposalID) external view override returns (ValidatorListState) {
-        return validators[_proposalID].state;
     }
 
     /// @notice get count of validator
@@ -205,9 +194,97 @@ contract VoteraVote is Ownable, IVoteraVote {
     /// @notice get validator at index
     /// @param _proposalID id of proposal
     /// @param _index index
-    /// @return returns the ballot at that index
-    function getValidatorAt(bytes32 _proposalID, uint256 _index) public view returns (address) {
+    /// @return returns the validator address at that index
+    function getValidatorAt(bytes32 _proposalID, uint256 _index) external view override returns (address) {
         return validators[_proposalID].keys[_index];
+    }
+
+    /// @notice get validator list is finalized or not
+    /// @return returns true if finalized or false
+    function isValidatorListFinalized(bytes32 _proposalID) external view override returns (bool) {
+        return
+            voteInfos[_proposalID].state != VoteState.INVALID &&
+            voteInfos[_proposalID].state != VoteState.CREATED &&
+            voteInfos[_proposalID].state != VoteState.SETTING;
+    }
+
+    function isContainAssess(bytes32 _proposalId, address _address) private view returns (bool) {
+        return ballots[_proposalId].assessValues[_address].length != 0;
+    }
+
+    /// @notice submit assessment
+    /// @param _proposalID id of proposal
+    /// @param _assess assessment result
+    function submitAssess(bytes32 _proposalID, uint64[] calldata _assess) public {
+        onlyVoteWithState(_proposalID, VoteState.ASSESSING);
+        require(voteInfos[_proposalID].voteType == VoteType.FUND, "E001");
+        require(isContainValidator(_proposalID, msg.sender), "E000");
+        require(block.timestamp < voteInfos[_proposalID].endAssess, "E003");
+        require(_assess.length == 5, "E001");
+        for (uint256 i = 0; i < _assess.length; i++) {
+            require(_assess[i] >= 1 && _assess[i] <= 10, "E001");
+        }
+
+        if (isContainAssess(_proposalID, msg.sender)) {
+            ballots[_proposalID].assessValues[msg.sender] = _assess;
+        } else {
+            ballots[_proposalID].assessValues[msg.sender] = _assess;
+            ballots[_proposalID].assessKeys.push(msg.sender);
+        }
+    }
+
+    /// @notice get count of assessment
+    /// @param _proposalID id of proposal
+    /// @return returns the count of assessment
+    function getAssessCount(bytes32 _proposalID) public view returns (uint256) {
+        return ballots[_proposalID].assessKeys.length;
+    }
+
+    /// @notice get assessment address 
+    /// @param _proposalID id of proposal
+    /// @param _index index
+    /// @return returns the address of assessment of that index
+    function getAssessAt(bytes32 _proposalID, uint256 _index) public view returns (address) {
+        return ballots[_proposalID].assessKeys[_index];
+    }
+
+    /// @notice count assessment result
+    /// @param _proposalID id of proposal
+    function countAssess(bytes32 _proposalID) public onlyOwner {
+        onlyVoteWithState(_proposalID, VoteState.ASSESSING);
+        require(voteInfos[_proposalID].voteType == VoteType.FUND, "E001");
+        require(block.timestamp >= voteInfos[_proposalID].endAssess, "E004");
+
+        uint64[] memory assessResult = new uint64[](5);
+        uint256 participantSize = ballots[_proposalID].assessKeys.length;
+        for (uint256 i = 0; i < participantSize; i++) {
+            address participantAddress = ballots[_proposalID].assessKeys[i];
+            for (uint256 j = 0; j < ballots[_proposalID].assessValues[participantAddress].length; j++) {
+                assessResult[j] += ballots[_proposalID].assessValues[participantAddress][j];
+            }
+        }
+
+        voteInfos[_proposalID].state = VoteState.RUNNING;
+        voteInfos[_proposalID].assessResult = assessResult;
+
+        ICommonsBudget(voteInfos[_proposalID].commonsBudgetAddress).saveAssessResult(
+            _proposalID,
+            validators[_proposalID].keys.length,
+            participantSize,
+            assessResult
+        );
+    }
+
+    /// @notice get assess result
+    /// @param _proposalID id of proposal
+    /// @return returns the result of assessment
+    function getAssessResult(bytes32 _proposalID) public view returns (uint64[] memory) {
+        require(voteInfos[_proposalID].state != VoteState.INVALID, "E001");
+        require(
+            voteInfos[_proposalID].state == VoteState.RUNNING || voteInfos[_proposalID].state == VoteState.FINISHED,
+            "E002"
+        );
+        return voteInfos[_proposalID].assessResult;
     }
 
     function verifyBallot(
@@ -220,6 +297,14 @@ contract VoteraVote is Ownable, IVoteraVote {
         require(ECDSA.recover(dataHash, _signature) == owner(), "E001");
     }
 
+    /// @notice check whether ballot is exist or not
+    /// @param _proposalID id of proposal
+    /// @param _address address of validator
+    /// @return returns true if found ballot, or false
+    function isContainBallot(bytes32 _proposalID, address _address) public view returns (bool) {
+        return ballots[_proposalID].values[_address].key == _address;
+    }
+
     /// @notice submit ballot
     /// @param _proposalID id of proposal
     /// @param _commitment commitment of ballot
@@ -229,8 +314,7 @@ contract VoteraVote is Ownable, IVoteraVote {
         bytes32 _commitment,
         bytes calldata _signature
     ) external override {
-        require(isExistProposal(_proposalID), "E001");
-        require(voteInfos[_proposalID].state == VoteState.RUNNING, "E002");
+        onlyVoteWithState(_proposalID, VoteState.RUNNING);
         require(isContainValidator(_proposalID, msg.sender), "E000");
         require(block.timestamp >= voteInfos[_proposalID].startVote, "E004");
         require(block.timestamp < voteInfos[_proposalID].endVote, "E003");
@@ -249,22 +333,29 @@ contract VoteraVote is Ownable, IVoteraVote {
         }
     }
 
+    /// @notice get count of ballot
+    /// @param _proposalID id of proposal
+    /// @return returns the count of ballot of vote
+    function getBallotCount(bytes32 _proposalID) public view returns (uint256) {
+        return ballots[_proposalID].keys.length;
+    }
+
     /// @notice get ballot of validator
     /// @param _proposalID id of proposal
     /// @param _validator address of validator
     /// @return returns the ballot of validator
     function getBallot(bytes32 _proposalID, address _validator) public view returns (Ballot memory) {
+        require(voteInfos[_proposalID].state != VoteState.INVALID, "E001");
+        require(block.timestamp >= voteInfos[_proposalID].endVote, "E004");
         return ballots[_proposalID].values[_validator];
     }
 
-    /// @notice get ballot at that index
+    /// @notice get ballot address at that index
     /// @param _proposalID id of proposal
     /// @param _index index
-    /// @return returns the ballot at that index
-    function getBallotAt(bytes32 _proposalID, uint256 _index) public view returns (Ballot memory) {
-        require(isExistProposal(_proposalID) && _index < getBallotCount(_proposalID), "E001");
-        require(block.timestamp >= voteInfos[_proposalID].endVote && voteInfos[_proposalID].endVote > 0, "E004");
-        return ballots[_proposalID].values[ballots[_proposalID].keys[_index]];
+    /// @return returns the ballot address at that index
+    function getBallotAt(bytes32 _proposalID, uint256 _index) public view returns (address) {
+        return ballots[_proposalID].keys[_index];
     }
 
     /// @notice submit revealed ballot after end of vote
@@ -279,26 +370,26 @@ contract VoteraVote is Ownable, IVoteraVote {
         uint64[] calldata _nonces
     ) external onlyOwner {
         require(
-            isExistProposal(_proposalID) &&
+            voteInfos[_proposalID].state != VoteState.INVALID &&
                 _validators.length == _choices.length &&
                 _validators.length == _nonces.length,
             "E001"
         );
         require(voteInfos[_proposalID].state == VoteState.RUNNING, "E002");
-        require(block.timestamp >= voteInfos[_proposalID].openVote && voteInfos[_proposalID].openVote > 0, "E004");
+        require(block.timestamp >= voteInfos[_proposalID].openVote, "E004");
 
         address voteContract = address(this);
         uint256 len = _validators.length;
-        uint256 _revealCount = revealCounts[_proposalID];
+        uint256 _revealCount = ballots[_proposalID].revealCount;
+        address _validator;
+        bytes32 dataHash;
 
         for (uint256 i = 0; i < len; ++i) {
-            address _validator = _validators[i];
+            _validator = _validators[i];
             if (isContainBallot(_proposalID, _validator)) {
                 require(_nonces[i] != 0, "E001");
 
-                bytes32 dataHash = keccak256(
-                    abi.encode(voteContract, _proposalID, _validator, _choices[i], _nonces[i])
-                );
+                dataHash = keccak256(abi.encode(voteContract, _proposalID, _validator, _choices[i], _nonces[i]));
                 require(dataHash == ballots[_proposalID].values[_validator].commitment, "E001");
 
                 if (ballots[_proposalID].values[_validator].nonce == 0) {
@@ -309,22 +400,18 @@ contract VoteraVote is Ownable, IVoteraVote {
             }
         }
 
-        revealCounts[_proposalID] = _revealCount;
+        ballots[_proposalID].revealCount = _revealCount;
     }
 
     /// @notice count vote result after all ballot are revealed
     /// @param _proposalID id of proposal
     function countVote(bytes32 _proposalID) public onlyOwner {
-        require(isExistProposal(_proposalID), "E001");
-        require(
-            voteInfos[_proposalID].state == VoteState.RUNNING &&
-                revealCounts[_proposalID] == getBallotCount(_proposalID),
-            "E002"
-        );
+        onlyVoteWithState(_proposalID, VoteState.RUNNING);
+        require(ballots[_proposalID].revealCount == getBallotCount(_proposalID), "E002");
         require(block.timestamp >= voteInfos[_proposalID].openVote && voteInfos[_proposalID].openVote > 0, "E004");
 
         uint64[] memory voteResult = new uint64[](3);
-        uint256 revealCount = revealCounts[_proposalID];
+        uint256 revealCount = ballots[_proposalID].revealCount;
 
         for (uint256 i = 0; i < revealCount; i++) {
             Candidate choice = ballots[_proposalID].values[ballots[_proposalID].keys[i]].choice;
@@ -347,13 +434,7 @@ contract VoteraVote is Ownable, IVoteraVote {
     /// @notice get vote result
     /// @param _proposalID id of proposal
     function getVoteResult(bytes32 _proposalID) external view override returns (uint64[] memory) {
-        require(isExistProposal(_proposalID), "E001");
-        require(voteInfos[_proposalID].state == VoteState.FINISHED, "E002");
-        uint256 len = voteInfos[_proposalID].voteResult.length;
-        uint64[] memory _voteResult = new uint64[](len);
-        for (uint256 i = 0; i < len; i++) {
-            _voteResult[i] = voteInfos[_proposalID].voteResult[i];
-        }
-        return _voteResult;
+        onlyVoteWithState(_proposalID, VoteState.FINISHED);
+        return voteInfos[_proposalID].voteResult;
     }
 }

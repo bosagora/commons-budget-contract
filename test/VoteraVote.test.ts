@@ -1,7 +1,7 @@
 import chai, { expect } from "chai";
 import crypto from "crypto";
 import { solidity } from "ethereum-waffle";
-import { BigNumber, utils, Wallet } from "ethers";
+import { BigNumber, BigNumberish, BytesLike, utils, Wallet } from "ethers";
 import { ethers, network, waffle } from "hardhat";
 import {
     CommonsBudget,
@@ -10,12 +10,29 @@ import {
     VoteraVote__factory as VoteraVoteFactory,
     // eslint-disable-next-line node/no-missing-import
 } from "../typechain";
-import { getHash, makeCommitment, signCommitment, signSystemProposal } from "./VoteHelper";
+import { makeCommitment, signCommitment, signFundProposal, signSystemProposal } from "./VoteHelper";
 
 const AddressZero = "0x0000000000000000000000000000000000000000";
 const InvalidProposal = "0x43d26d775ef3a282483394ce041a2757fbf700c9cf86accc6f0ce410accf123f";
+const DocHash = "0x9f18669085971c1306dd0096ec531e71ad2732fd0e783068f2a3aba628613231";
 
 chai.use(solidity);
+
+function toSystemInput(title: string, start: number, end: number, docHash: BytesLike) {
+    return { start, end, startAssess: 0, endAssess: 0, docHash, amount: 0, title };
+}
+
+function toFundInput(
+    title: string,
+    start: number,
+    end: number,
+    startAssess: number,
+    endAssess: number,
+    docHash: BytesLike,
+    amount: BigNumberish
+) {
+    return { start, end, startAssess, endAssess, docHash, amount, title };
+}
 
 async function displayBalance(address: string, message: string) {
     const balance = await ethers.provider.getBalance(address);
@@ -37,6 +54,7 @@ describe("VoteraVote", () => {
     const provider = waffle.provider;
     const [deployer, budgetManager, voteManager, ...validators] = provider.getWallets();
     const basicFee = ethers.utils.parseEther("100.0");
+    const fundAmount = ethers.utils.parseEther("10000.0");
 
     let proposal: string;
     let startTime: number;
@@ -44,11 +62,67 @@ describe("VoteraVote", () => {
     let openTime: number;
     let voteAddress: string;
 
+    let startAssess: number;
+    let endAssess: number;
+
     let voteraVote: VoteraVote;
     let voteBudget: CommonsBudget;
 
     let invalidCaller: Wallet;
     let invalidSigner: Wallet;
+
+    const createSystemVote = async () => {
+        const blockLatest = await ethers.provider.getBlock("latest");
+        const title = "SystemProposalTitle";
+        startTime = blockLatest.timestamp + 86400; // 1 day
+        endTime = startTime + 86400; // 1 day
+        openTime = endTime + 30;
+        const docHash = DocHash;
+        const signProposal = await signSystemProposal(voteManager, proposal, title, startTime, endTime, docHash);
+
+        const validatorBudget = CommonsBudgetFactory.connect(budget.address, validators[0]);
+        const makeProposalTx = await validatorBudget.createSystemProposal(
+            proposal,
+            toSystemInput(title, startTime, endTime, docHash),
+            signProposal,
+            { value: basicFee }
+        );
+        await makeProposalTx.wait();
+    };
+
+    const createFundVote = async () => {
+        const blockLatest = await ethers.provider.getBlock("latest");
+        const title = "FundProposalTitle";
+
+        startAssess = blockLatest.timestamp;
+        endAssess = startAssess + 15000;
+        startTime = blockLatest.timestamp + 86400; // 1 day
+        endTime = startTime + 86400; // 1 day
+        openTime = endTime + 30;
+        const docHash = DocHash;
+        const proposer = validators[0].address;
+        const signProposal = await signFundProposal(
+            voteManager,
+            proposal,
+            title,
+            startTime,
+            endTime,
+            startAssess,
+            endAssess,
+            docHash,
+            fundAmount,
+            proposer
+        );
+
+        const validatorBudget = CommonsBudgetFactory.connect(budget.address, validators[0]);
+        const makeProposalTx = await validatorBudget.createFundProposal(
+            proposal,
+            toFundInput(title, startTime, endTime, startAssess, endAssess, docHash, fundAmount),
+            signProposal,
+            { value: basicFee }
+        );
+        await makeProposalTx.wait();
+    };
 
     before(async () => {
         // deploy CommonsBudget
@@ -68,7 +142,7 @@ describe("VoteraVote", () => {
         await voteraVote.changeCommonBudgetContract(budget.address);
 
         // change parameter of budget
-        const changeParamTx = await budget.changeVoteParam(voteManager.address, voteraVote.address);
+        await budget.changeVoteParam(voteManager.address, voteraVote.address);
 
         // send test eth to budget
         const transactionTx = await deployer.sendTransaction({
@@ -76,44 +150,33 @@ describe("VoteraVote", () => {
             value: utils.parseEther("10.0"),
         });
         await transactionTx.wait();
+
+        // sending amount to budget
+        await provider.getSigner(deployer.address).sendTransaction({
+            to: budget.address,
+            value: fundAmount,
+        });
     });
 
     beforeEach(async () => {
         // generate random proposal id (which is address type)
         proposal = getNewProposal();
-
-        // get current blocktime and set vote basic parameter
-        const blockLatest = await ethers.provider.getBlock("latest");
-        const title = "Votera Vote Test";
-        startTime = blockLatest.timestamp + 86400; // 1 day
-        endTime = startTime + 86400; // 1 day
-        openTime = endTime + 30;
-        const docHash = getHash("bodyHash");
-        const signProposal = await signSystemProposal(voteManager, proposal, title, startTime, endTime, docHash);
-
-        // make proposal data (by validator)
-        const validatorBudget = CommonsBudgetFactory.connect(budget.address, validators[0]);
-        const makeProposalTx = await validatorBudget.createSystemProposal(
-            proposal,
-            title,
-            startTime,
-            endTime,
-            docHash,
-            signProposal,
-            { value: basicFee }
-        );
-        await makeProposalTx.wait();
     });
 
-    it("Check VoteraVote normal lifecycle", async () => {
-        expect(await voteraVote.getManager()).to.be.equal(voteManager.address);
-        const voteInfo = await voteraVote.voteInfos(proposal);
-        expect(voteInfo.commonsBudgetAddress).equal(budget.address);
+    it("normal lifecycle - system vote", async () => {
+        await createSystemVote();
 
-        await displayBalance(voteManager.address, "init");
+        expect(await voteraVote.getManager()).to.be.equal(voteManager.address);
+        let voteInfo = await voteraVote.voteInfos(proposal);
+        expect(voteInfo.commonsBudgetAddress).equal(budget.address);
+        expect(voteInfo.state, "CREATED state").equal(1);
+
+        await displayBalance(voteManager.address, "init - system");
 
         // Setup Vote Information
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        voteInfo = await voteraVote.voteInfos(proposal);
+        expect(voteInfo.state, "SETTING state").equal(2);
 
         // Add Validator list for voter confirmation
         const addValidatorTx = await voteraVote.addValidators(
@@ -123,6 +186,9 @@ describe("VoteraVote", () => {
         );
         await addValidatorTx.wait();
         expect(await voteraVote.getValidatorCount(proposal)).equal(validators.length);
+
+        voteInfo = await voteraVote.voteInfos(proposal);
+        expect(voteInfo.state, "RUNNING state").equal(4); // RUNNING
 
         // wait until startTime
         await network.provider.send("evm_increaseTime", [86400]);
@@ -169,7 +235,8 @@ describe("VoteraVote", () => {
 
         // check read ballot information
         for (let i = 0; i < voterCount; i += 1) {
-            const ballot = await voteraVote.getBallotAt(proposal, i);
+            const ballotAddr = await voteraVote.getBallotAt(proposal, i);
+            const ballot = await voteraVote.getBallot(proposal, ballotAddr);
             expect(ballot.key).equal(validators[i].address);
         }
 
@@ -203,10 +270,139 @@ describe("VoteraVote", () => {
             expect(voteResult[i]).equal(expectVoteCounts[i]);
         }
 
-        // const finishVoteTx = await voteBudget.finishVote(proposal, validatorCount, voteResult);
-        // await finishVoteTx.wait();
+        displayBalance(voteManager.address, "end_ - system");
 
-        displayBalance(voteManager.address, "end_");
+        const proposalData = await voteBudget.getProposalData(proposal);
+        expect(proposalData.validatorSize).equal(validatorCount);
+        for (let i = 0; i < 3; i += 1) {
+            expect(proposalData.voteResult[i]).equal(BigNumber.from(voteResult[i]));
+        }
+    });
+
+    it("normal lifecycle - fund vote", async () => {
+        await createFundVote();
+
+        expect(await voteraVote.getManager()).to.be.equal(voteManager.address);
+        let voteInfo = await voteraVote.voteInfos(proposal);
+        expect(voteInfo.commonsBudgetAddress).equal(budget.address);
+        expect(voteInfo.state, "CREATED state").equal(1);
+
+        await displayBalance(voteManager.address, "init - fund");
+
+        // Setup Vote Information
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        voteInfo = await voteraVote.voteInfos(proposal);
+        expect(voteInfo.state, "SETTING state").equal(2);
+
+        // Add Validator list for voter confirmation
+        const addValidatorTx = await voteraVote.addValidators(
+            proposal,
+            validators.map((v) => v.address),
+            true
+        );
+        await addValidatorTx.wait();
+        expect(await voteraVote.getValidatorCount(proposal)).equal(validators.length);
+
+        voteInfo = await voteraVote.voteInfos(proposal);
+        expect(voteInfo.state, "ASSESSING state").equal(3); // ASSESSING
+
+        for (let i = 0; i < validators.length; i += 1) {
+            const assessVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            await assessVote.submitAssess(proposal, [10, 10, 10, 10, 10]);
+        }
+
+        // wait until assessEnd
+        await network.provider.send("evm_increaseTime", [15000]);
+        await network.provider.send("evm_mine");
+
+        await voteraVote.countAssess(proposal);
+
+        voteInfo = await voteraVote.voteInfos(proposal);
+        expect(voteInfo.state, "RUNNING state").equal(4); // RUNNING
+        const assessResult = await voteraVote.getAssessResult(proposal);
+        expect(assessResult).to.eql([10, 10, 10, 10, 10].map((v) => BigNumber.from(v * validators.length)));
+
+        // wait until startTime
+        await network.provider.send("evm_increaseTime", [86400 - 15000]);
+        await network.provider.send("evm_mine");
+
+        // prepare ballot
+        const choices: number[] = [];
+        const nonces: number[] = [];
+        const expectVoteCounts: number[] = [0, 0, 0];
+        const voterCount = validators.length - 1;
+
+        for (let i = 0; i < voterCount; i += 1) {
+            const c = i % 3;
+            choices.push(c);
+            nonces.push(i + 1);
+            expectVoteCounts[c] += 1;
+        }
+
+        // submit ballot
+        let submitBallotTx;
+        for (let i = 0; i < voterCount; i += 1) {
+            const commitment = await makeCommitment(
+                voteAddress,
+                proposal,
+                validators[i].address,
+                choices[i],
+                nonces[i]
+            );
+            const signature = await signCommitment(voteManager, proposal, validators[i].address, commitment);
+
+            const ballotVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            submitBallotTx = await ballotVote.submitBallot(proposal, commitment, signature);
+        }
+
+        expect(await voteraVote.getBallotCount(proposal)).equal(voterCount);
+
+        if (submitBallotTx) {
+            await submitBallotTx.wait();
+        }
+
+        // wait until endTime
+        await network.provider.send("evm_increaseTime", [86400]);
+        await network.provider.send("evm_mine");
+
+        // check read ballot information
+        for (let i = 0; i < voterCount; i += 1) {
+            const ballotAddr = await voteraVote.getBallotAt(proposal, i);
+            const ballot = await voteraVote.getBallot(proposal, ballotAddr);
+            expect(ballot.key).equal(validators[i].address);
+        }
+
+        // wait until openTime
+        await network.provider.send("evm_increaseTime", [30]);
+        await network.provider.send("evm_mine");
+
+        // reveal ballot (by voteraServer)
+        const keys1 = validators.map((v) => v.address).slice(0, 4);
+        const choice1 = choices.slice(0, 4);
+        const nonce1 = nonces.slice(0, 4);
+
+        const revealTx1 = await voteraVote.revealBallot(proposal, keys1, choice1, nonce1);
+        await revealTx1.wait();
+
+        await expect(voteraVote.countVote(proposal)).to.be.revertedWith("E002");
+
+        const keys2 = validators.map((v) => v.address).slice(4, voterCount);
+        const choice2 = choices.slice(4, voterCount);
+        const nonce2 = nonces.slice(4, voterCount);
+
+        await voteraVote.revealBallot(proposal, keys2, choice2, nonce2);
+
+        const registerTx = await voteraVote.countVote(proposal);
+        await registerTx.wait();
+
+        // check vote result
+        const validatorCount = await voteraVote.getValidatorCount(proposal);
+        const voteResult = await voteraVote.getVoteResult(proposal);
+        for (let i = 0; i < 3; i += 1) {
+            expect(voteResult[i]).equal(expectVoteCounts[i]);
+        }
+
+        displayBalance(voteManager.address, "end_ - fund");
 
         const proposalData = await voteBudget.getProposalData(proposal);
         expect(proposalData.validatorSize).equal(validatorCount);
@@ -235,10 +431,12 @@ describe("VoteraVote", () => {
     it("init: E000", async () => {
         invalidCaller = deployer;
         const invalidCallerVote = VoteraVoteFactory.connect(voteAddress, invalidCaller);
-        await expect(invalidCallerVote.init(proposal, startTime, endTime)).to.be.revertedWith("E000");
+        await expect(invalidCallerVote.init(proposal, 0, startTime, endTime, 0, 0)).to.be.revertedWith("E000");
     });
 
     it("setupVoteInfo", async () => {
+        await createSystemVote();
+
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
 
         const voteInfo = await voteraVote.voteInfos(proposal);
@@ -246,10 +444,12 @@ describe("VoteraVote", () => {
         expect(voteInfo.endVote).equals(endTime);
         expect(voteInfo.openVote).equals(openTime);
         expect(voteInfo.info).equals("info");
-        expect(voteInfo.state).equals(2);
+        expect(voteInfo.state, "SETTING state").equals(2); // SETTING
     });
 
     it("setupVoteInfo: Ownable: caller is not the owner", async () => {
+        await createSystemVote();
+
         invalidCaller = budgetManager;
         const invalidCallerVote = VoteraVoteFactory.connect(voteAddress, invalidCaller);
         await expect(
@@ -258,6 +458,9 @@ describe("VoteraVote", () => {
     });
 
     it("setupVoteInfo: E001", async () => {
+        await createSystemVote();
+
+        // invalid proposal
         await expect(
             voteraVote.setupVoteInfo(InvalidProposal, startTime, endTime, openTime, "info")
         ).to.be.revertedWith("E001");
@@ -269,11 +472,7 @@ describe("VoteraVote", () => {
             voteraVote.setupVoteInfo(proposal, invalidStartTime, endTime, openTime, "info")
         ).to.be.revertedWith("E001");
 
-        // 0 < _startVote && _startVote < _endVote && _endVote < _openVote
-        const invalidEndTime = startTime - 100;
-        await expect(
-            voteraVote.setupVoteInfo(proposal, startTime, invalidEndTime, openTime, "info")
-        ).to.be.revertedWith("E001");
+        // _endVote < _openVote
         const invalidOpenTime = endTime - 100;
         await expect(
             voteraVote.setupVoteInfo(proposal, startTime, endTime, invalidOpenTime, "info")
@@ -281,6 +480,8 @@ describe("VoteraVote", () => {
     });
 
     it("setupVoteInfo: E002 - call setupVote twice", async () => {
+        await createSystemVote();
+
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
 
         // call setupVoteInfo again
@@ -290,6 +491,8 @@ describe("VoteraVote", () => {
     });
 
     it("setupVoteInfo: E002 - invalid parameter", async () => {
+        await createSystemVote();
+
         const wrongStartTime = startTime + 100;
         await expect(voteraVote.setupVoteInfo(proposal, wrongStartTime, endTime, openTime, "info")).to.be.revertedWith(
             "E002"
@@ -301,7 +504,9 @@ describe("VoteraVote", () => {
         );
     });
 
-    it("addValidators", async () => {
+    it("addValidators - system", async () => {
+        await createSystemVote();
+
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
 
         await voteraVote.addValidators(
@@ -314,11 +519,51 @@ describe("VoteraVote", () => {
             expect(await voteraVote.getValidatorAt(proposal, i)).equal(validators[i].address);
         }
 
+        let voteInfo = await voteraVote.voteInfos(proposal);
+        expect(voteInfo.state, "SETTING state").equal(2); // CREATED
+
         await voteraVote.addValidators(
             proposal,
             validators.slice(3).map((v) => v.address),
             true
         );
+
+        voteInfo = await voteraVote.voteInfos(proposal);
+        expect(voteInfo.state, "RUNNING state").equal(4); // RUNNING
+
+        expect(await voteraVote.getValidatorCount(proposal)).equal(BigNumber.from(validators.length));
+        for (let i = 0; i < validators.length; i += 1) {
+            expect(await voteraVote.getValidatorAt(proposal, i)).equal(validators[i].address);
+        }
+    });
+
+    it("addValidators - fund", async () => {
+        await createFundVote();
+
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+
+        await voteraVote.addValidators(
+            proposal,
+            validators.slice(0, 5).map((v) => v.address),
+            false
+        );
+        expect(await voteraVote.getValidatorCount(proposal)).equal(BigNumber.from(5));
+        for (let i = 0; i < 5; i += 1) {
+            expect(await voteraVote.getValidatorAt(proposal, i)).equal(validators[i].address);
+        }
+
+        let voteInfo = await voteraVote.voteInfos(proposal);
+        expect(voteInfo.state, "SETTING state").equal(2); // CREATED
+
+        await voteraVote.addValidators(
+            proposal,
+            validators.slice(3).map((v) => v.address),
+            true
+        );
+
+        voteInfo = await voteraVote.voteInfos(proposal);
+        expect(voteInfo.state, "ASSESSING state").equal(3); // ASSESSING
+
         expect(await voteraVote.getValidatorCount(proposal)).equal(BigNumber.from(validators.length));
         for (let i = 0; i < validators.length; i += 1) {
             expect(await voteraVote.getValidatorAt(proposal, i)).equal(validators[i].address);
@@ -349,6 +594,8 @@ describe("VoteraVote", () => {
     });
 
     it("addValidators: E002", async () => {
+        await createSystemVote();
+
         // call addvalidators without calling setupVoteInfo
         await expect(
             voteraVote.addValidators(
@@ -359,9 +606,9 @@ describe("VoteraVote", () => {
         ).to.be.revertedWith("E002");
     });
 
-    it("addValidators: E002 - add validator after finalize", async () => {
+    it("addValidators: E002 - add validator after finalize, system", async () => {
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
-
         await voteraVote.addValidators(
             proposal,
             validators.slice(0, 5).map((v) => v.address),
@@ -377,7 +624,26 @@ describe("VoteraVote", () => {
         ).to.be.revertedWith("E002");
     });
 
+    it("addValidators: E002 - add validator after finalize, fund", async () => {
+        await createFundVote();
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        await voteraVote.addValidators(
+            proposal,
+            validators.slice(0, 5).map((v) => v.address),
+            true
+        );
+        await expect(
+            voteraVote.addValidators(
+                proposal,
+                validators.slice(5).map((v) => v.address),
+                true
+            )
+        ).to.be.revertedWith("E002");
+    });
+
     it("addValidators: E003", async () => {
+        await createSystemVote();
+
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
 
         // wait until startTime
@@ -394,7 +660,309 @@ describe("VoteraVote", () => {
         ).to.be.revertedWith("E003");
     });
 
+    it("submitAssess", async () => {
+        await createFundVote();
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        await voteraVote.addValidators(
+            proposal,
+            validators.map((v) => v.address),
+            true
+        );
+        for (let i = 0; i < validators.length - 3; i += 1) {
+            const assessVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            await assessVote.submitAssess(proposal, [10, 10, 10, 10, 10]);
+        }
+        for (let i = 3; i < validators.length; i += 1) {
+            const assessVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            await assessVote.submitAssess(proposal, [9, 9, 9, 9, 9]);
+        }
+        const assessCount = await voteraVote.getAssessCount(proposal);
+        expect(assessCount).equal(BigNumber.from(validators.length));
+        for (let i = 0; i < validators.length; i += 1) {
+            const assessAddr = await voteraVote.getAssessAt(proposal, i);
+            expect(assessAddr).equal(validators[i].address);
+        }
+    });
+
+    it("submitAssess: E001", async () => {
+        await createFundVote();
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        await voteraVote.addValidators(
+            proposal,
+            validators.map((v) => v.address),
+            true
+        );
+
+        const assessVote = VoteraVoteFactory.connect(voteAddress, validators[0]);
+
+        // invalid proposal
+        await expect(assessVote.submitAssess(InvalidProposal, [10, 10, 10, 10, 10])).to.be.revertedWith("E001");
+
+        // invalid parameter, _assess.length == 5
+        const smallData = [10, 10, 10, 10];
+        await expect(assessVote.submitAssess(proposal, smallData)).to.be.revertedWith("E001");
+
+        const largeData = [10, 10, 10, 10, 10, 10];
+        await expect(assessVote.submitAssess(proposal, largeData)).to.be.revertedWith("E001");
+
+        // _assess[i] >= 1 && _assess[i] <= 10
+        const minData = [10, 10, 0, 10, 10];
+        await expect(assessVote.submitAssess(proposal, minData)).to.be.revertedWith("E001");
+
+        const maxData = [10, 10, 11, 10, 10];
+        await expect(assessVote.submitAssess(proposal, maxData)).to.be.revertedWith("E001");
+    });
+
+    it("submitAssess: E002", async () => {
+        await createFundVote();
+
+        const assessVote = VoteraVoteFactory.connect(voteAddress, validators[0]);
+
+        // current state = CREATED
+        await expect(assessVote.submitAssess(proposal, [10, 10, 10, 10, 10])).to.be.revertedWith("E002");
+
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        // current state = SETTING
+        await expect(assessVote.submitAssess(proposal, [10, 10, 10, 10, 10])).to.be.revertedWith("E002");
+
+        await voteraVote.addValidators(
+            proposal,
+            validators.map((v) => v.address),
+            false
+        );
+        // current state = SETTING
+        await expect(assessVote.submitAssess(proposal, [10, 10, 10, 10, 10])).to.be.revertedWith("E002");
+
+        await voteraVote.addValidators(proposal, [], true);
+        // current state = ASSESSING
+        await assessVote.submitAssess(proposal, [10, 10, 10, 10, 10]);
+
+        // wait until assessEnd
+        await network.provider.send("evm_increaseTime", [15000]);
+        await network.provider.send("evm_mine");
+
+        await voteraVote.countAssess(proposal);
+
+        // current state = RUNNING
+        await expect(assessVote.submitAssess(proposal, [10, 10, 10, 10, 10])).to.be.revertedWith("E002");
+    });
+
+    it("submitAssess: E000", async () => {
+        await createFundVote();
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        await voteraVote.addValidators(
+            proposal,
+            validators.slice(1).map((v) => v.address),
+            true
+        );
+
+        const wrongAssessVote = VoteraVoteFactory.connect(voteAddress, validators[0]);
+        await expect(wrongAssessVote.submitAssess(proposal, [10, 10, 10, 10, 10])).to.be.revertedWith("E000");
+    });
+
+    it("submitAssess: E003", async () => {
+        await createFundVote();
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        await voteraVote.addValidators(
+            proposal,
+            validators.map((v) => v.address),
+            true
+        );
+
+        // wait until assessEnd
+        await network.provider.send("evm_increaseTime", [15000]);
+        await network.provider.send("evm_mine");
+
+        const accessVote = VoteraVoteFactory.connect(voteAddress, validators[0]);
+        await expect(accessVote.submitAssess(proposal, [10, 10, 10, 10, 10])).to.be.revertedWith("E003");
+    });
+
+    it("countAssess - pass", async () => {
+        await createFundVote();
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        await voteraVote.addValidators(
+            proposal,
+            validators.map((v) => v.address),
+            true
+        );
+
+        const assessValue = [6, 7, 8, 9, 10];
+
+        for (let i = 0; i < validators.length; i += 1) {
+            const accessVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            await accessVote.submitAssess(proposal, assessValue);
+        }
+
+        // wait until assessEnd
+        await network.provider.send("evm_increaseTime", [15000]);
+        await network.provider.send("evm_mine");
+
+        await voteraVote.countAssess(proposal);
+
+        let voteInfo = await voteraVote.voteInfos(proposal);
+        expect(voteInfo.state, "RUNNING").equal(4); // RUNNING
+        const assessResult = await voteraVote.getAssessResult(proposal);
+        expect(assessResult).to.eql(assessValue.map((v) => BigNumber.from(v * validators.length)));
+
+        const proposalData = await budget.getProposalData(proposal);
+        expect(proposalData.state, "ACCEPTED state").equal(3); // ACCEPTED
+    });
+
+    it("countAssess - reject", async () => {
+        await createFundVote();
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        await voteraVote.addValidators(
+            proposal,
+            validators.map((v) => v.address),
+            true
+        );
+
+        const assessValue = [5, 5, 6, 6, 7];
+
+        for (let i = 0; i < validators.length; i += 1) {
+            const accessVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            await accessVote.submitAssess(proposal, assessValue);
+        }
+
+        // wait until assessEnd
+        await network.provider.send("evm_increaseTime", [15000]);
+        await network.provider.send("evm_mine");
+
+        await voteraVote.countAssess(proposal);
+
+        let voteInfo = await voteraVote.voteInfos(proposal);
+        expect(voteInfo.state, "RUNNING").equal(4); // RUNNING
+        const assessResult = await voteraVote.getAssessResult(proposal);
+        expect(assessResult).to.eql(assessValue.map((v) => BigNumber.from(v * validators.length)));
+
+        const proposalData = await budget.getProposalData(proposal);
+        expect(proposalData.state, "REJECTED state").equal(2); // ACCEPTED
+    });
+
+    it("countAssess: Ownable: caller is not the owner", async () => {
+        invalidCaller = deployer;
+        const invalidCallerVote = VoteraVoteFactory.connect(voteAddress, invalidCaller);
+        await expect(invalidCallerVote.countAssess(proposal)).to.be.revertedWith("Ownable: caller is not the owner");
+    });
+
+    it("countAssess: E001", async () => {
+        await expect(voteraVote.countAssess(InvalidProposal)).to.be.revertedWith("E001");
+    });
+
+    it("countAssess: E002", async () => {
+        await createFundVote();
+
+        // state = CREATED
+        await expect(voteraVote.countAssess(proposal)).to.be.revertedWith("E002");
+
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+
+        // state = SETTING
+        await expect(voteraVote.countAssess(proposal)).to.be.revertedWith("E002");
+
+        await voteraVote.addValidators(
+            proposal,
+            validators.map((v) => v.address),
+            true
+        );
+
+        const assessValue = [6, 7, 8, 9, 10];
+
+        for (let i = 0; i < validators.length; i += 1) {
+            const accessVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            await accessVote.submitAssess(proposal, assessValue);
+        }
+
+        // wait until assessEnd
+        await network.provider.send("evm_increaseTime", [15000]);
+        await network.provider.send("evm_mine");
+
+        await voteraVote.countAssess(proposal);
+
+        // state = RUNNING
+        await expect(voteraVote.countAssess(proposal)).to.be.revertedWith("E002");
+    });
+
+    it("countAssess: E004", async () => {
+        await createFundVote();
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        await voteraVote.addValidators(
+            proposal,
+            validators.map((v) => v.address),
+            true
+        );
+
+        const assessValue = [6, 7, 8, 9, 10];
+
+        for (let i = 0; i < validators.length; i += 1) {
+            const accessVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            await accessVote.submitAssess(proposal, assessValue);
+        }
+
+        await expect(voteraVote.countAssess(proposal)).to.be.revertedWith("E004");
+    });
+
+    it("getAssessResult: E001", async () => {
+        await expect(voteraVote.getAssessResult(InvalidProposal)).to.be.revertedWith("E001");
+    });
+
+    it("getAssessResult: E002", async () => {
+        await createFundVote();
+
+        // state = CREATED
+        await expect(voteraVote.getAssessResult(proposal)).to.be.revertedWith("E002");
+
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+
+        // state = SETTING
+        await expect(voteraVote.getAssessResult(proposal)).to.be.revertedWith("E002");
+
+        await voteraVote.addValidators(
+            proposal,
+            validators.map((v) => v.address),
+            true
+        );
+
+        // state = ASSESSING
+        await expect(voteraVote.getAssessResult(proposal)).to.be.revertedWith("E002");
+
+        const assessValue = [6, 7, 8, 9, 10];
+
+        for (let i = 0; i < validators.length; i += 1) {
+            const accessVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            await accessVote.submitAssess(proposal, assessValue);
+        }
+
+        // wait until assessEnd
+        await network.provider.send("evm_increaseTime", [15000]);
+        await network.provider.send("evm_mine");
+
+        await voteraVote.countAssess(proposal);
+
+        // state = RUNNING
+        let assessResult = await voteraVote.getAssessResult(proposal);
+        expect(assessResult).to.eql(assessValue.map((v) => BigNumber.from(v * validators.length)));
+
+        // wait until startTime
+        await network.provider.send("evm_increaseTime", [86400 - 15000]);
+        await network.provider.send("evm_mine");
+
+        // wait until endTime
+        await network.provider.send("evm_increaseTime", [86400]);
+        await network.provider.send("evm_mine");
+
+        // wait until openTime
+        await network.provider.send("evm_increaseTime", [30]);
+        await network.provider.send("evm_mine");
+
+        await voteraVote.countVote(proposal);
+
+        assessResult = await voteraVote.getAssessResult(proposal);
+        expect(assessResult).to.eql(assessValue.map((v) => BigNumber.from(v * validators.length)));
+    });
+
     it("submitBallot", async () => {
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -418,12 +986,6 @@ describe("VoteraVote", () => {
 
         expect(await voteraVote.getBallotCount(proposal)).equal(BigNumber.from(1));
 
-        const ballot = await ballotVote.getBallot(proposal, validators[0].address);
-        expect(ballot.key).equal(validators[0].address);
-        expect(ballot.choice).equal(BigNumber.from(0)); // not yet revealed
-        expect(ballot.nonce).equal(BigNumber.from(0));
-        expect(ballot.commitment).equal(commitment);
-
         // validator[1]
         const commitment1 = await makeCommitment(voteAddress, proposal, validators[1].address, choice, nonce);
         const signature1 = await signCommitment(voteManager, proposal, validators[1].address, commitment1);
@@ -432,12 +994,6 @@ describe("VoteraVote", () => {
         await ballotVote1.submitBallot(proposal, commitment1, signature1);
 
         expect(await voteraVote.getBallotCount(proposal)).equal(BigNumber.from(2));
-
-        const ballot1 = await ballotVote1.getBallot(proposal, validators[1].address);
-        expect(ballot1.key).equal(validators[1].address);
-        expect(ballot1.choice).equal(BigNumber.from(0));
-        expect(ballot1.nonce).equal(BigNumber.from(0));
-        expect(ballot1.commitment).equal(commitment1);
 
         // overwrite by validator[0]
         const newChoice = 2;
@@ -449,6 +1005,17 @@ describe("VoteraVote", () => {
 
         // confirm getBallotCount not changed
         expect(await voteraVote.getBallotCount(proposal)).equal(BigNumber.from(2));
+
+        // wait until endTime
+        await network.provider.send("evm_increaseTime", [86400]);
+        await network.provider.send("evm_mine");
+        
+        const ballot1 = await ballotVote1.getBallot(proposal, validators[1].address);
+        expect(ballot1.key).equal(validators[1].address);
+        expect(ballot1.choice).equal(BigNumber.from(0));
+        expect(ballot1.nonce).equal(BigNumber.from(0));
+        expect(ballot1.commitment).equal(commitment1);
+
         const ballotChanged = await ballotVote.getBallot(proposal, validators[0].address);
         expect(ballotChanged.key).equal(validators[0].address);
         expect(ballotChanged.choice).equal(BigNumber.from(0));
@@ -469,6 +1036,8 @@ describe("VoteraVote", () => {
     });
 
     it("submitBallot: E002", async () => {
+        await createFundVote();
+
         const choice = 1;
         const nonce = 1;
 
@@ -477,10 +1046,54 @@ describe("VoteraVote", () => {
         const signature = await signCommitment(voteManager, proposal, validators[0].address, commitment);
 
         const ballotVote = VoteraVoteFactory.connect(voteAddress, validators[0]);
+        // state = CREATED
+        await expect(ballotVote.submitBallot(proposal, commitment, signature)).to.be.revertedWith("E002");
+
+        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        // state = SETTING
+        await expect(ballotVote.submitBallot(proposal, commitment, signature)).to.be.revertedWith("E002");
+
+        const addValidatorTx = await voteraVote.addValidators(
+            proposal,
+            validators.map((v) => v.address),
+            true
+        );
+        // state = ASSESSING
+        await expect(ballotVote.submitBallot(proposal, commitment, signature)).to.be.revertedWith("E002");
+
+        const assessValue = [6, 7, 8, 9, 10];
+
+        for (let i = 0; i < validators.length; i += 1) {
+            const accessVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            await accessVote.submitAssess(proposal, assessValue);
+        }
+
+        // wait until assessEnd
+        await network.provider.send("evm_increaseTime", [15000]);
+        await network.provider.send("evm_mine");
+
+        await voteraVote.countAssess(proposal);
+
+        // wait until startTime
+        await network.provider.send("evm_increaseTime", [86400 - 15000]);
+        await network.provider.send("evm_mine");
+
+        // wait until endTime
+        await network.provider.send("evm_increaseTime", [86400]);
+        await network.provider.send("evm_mine");
+
+        // wait until openTime
+        await network.provider.send("evm_increaseTime", [30]);
+        await network.provider.send("evm_mine");
+
+        await voteraVote.countVote(proposal);
+
+        // state = FINISHED
         await expect(ballotVote.submitBallot(proposal, commitment, signature)).to.be.revertedWith("E002");
     });
 
     it("submitBallot: E000", async () => {
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -524,6 +1137,7 @@ describe("VoteraVote", () => {
     });
 
     it("submitBallot: E004", async () => {
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -543,6 +1157,7 @@ describe("VoteraVote", () => {
     });
 
     it("submitBallot: E003", async () => {
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -570,6 +1185,7 @@ describe("VoteraVote", () => {
     });
 
     it("submitBallot: E001 - verifyBallot failed", async () => {
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -599,7 +1215,8 @@ describe("VoteraVote", () => {
         await expect(ballotVote.submitBallot(proposal, commitment, invalidSignature)).to.be.revertedWith("E001");
     });
 
-    it("getBallotAt", async () => {
+    it("getBallot", async () => {
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -633,7 +1250,8 @@ describe("VoteraVote", () => {
         expect(await voteraVote.getBallotCount(proposal)).equal(BigNumber.from(voteCount));
 
         for (let i = 0; i < voteCount; i += 1) {
-            const ballot = await voteraVote.getBallotAt(proposal, i);
+            const ballotAddr = await voteraVote.getBallotAt(proposal, i);
+            const ballot = await voteraVote.getBallot(proposal, ballotAddr);
             expect(ballot.key).equal(validators[i].address);
             expect(ballot.choice).equal(BigNumber.from(0));
             expect(ballot.nonce).equal(BigNumber.from(0));
@@ -641,52 +1259,12 @@ describe("VoteraVote", () => {
         }
     });
 
-    it("getBallotAt: E001", async () => {
-        await expect(voteraVote.getBallotAt(InvalidProposal, 0)).to.be.revertedWith("E001"); // not found proposal
-        // call without setupVoteInfo
-        await expect(voteraVote.getBallotAt(proposal, 0)).to.be.revertedWith("E001");
-
-        await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
-        await voteraVote.addValidators(
-            proposal,
-            validators.map((v) => v.address),
-            true
-        );
-
-        // wait until startTime
-        await network.provider.send("evm_increaseTime", [86400]);
-        await network.provider.send("evm_mine");
-
-        const commitments: string[] = [];
-        const voteCount = 2;
-
-        for (let i = 0; i < voteCount; i += 1) {
-            const choice = i % 3;
-            const nonce = i + 1;
-            const commitment = await makeCommitment(voteAddress, proposal, validators[i].address, choice, nonce);
-            const signature = await signCommitment(voteManager, proposal, validators[i].address, commitment);
-
-            commitments.push(commitment);
-
-            const ballotVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
-            await ballotVote.submitBallot(proposal, commitment, signature);
-        }
-
-        // wait until endTime
-        await network.provider.send("evm_increaseTime", [86400]);
-        await network.provider.send("evm_mine");
-
-        expect(await voteraVote.getBallotCount(proposal)).equal(BigNumber.from(voteCount));
-
-        const ballot = await voteraVote.getBallotAt(proposal, 0);
-        expect(ballot.key).equal(validators[0].address);
-        expect(ballot.commitment).equal(commitments[0]);
-
-        const invalidInput = 3;
-        await expect(voteraVote.getBallotAt(proposal, invalidInput)).to.be.revertedWith("E001");
+    it("getBallot: E001", async () => {
+        await expect(voteraVote.getBallot(InvalidProposal, validators[0].address)).to.be.revertedWith("E001"); // not found proposal
     });
 
-    it("getBallotAt: E004", async () => {
+    it("getBallot: E004", async () => {
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -694,26 +1272,7 @@ describe("VoteraVote", () => {
             true
         );
 
-        // wait until startTime
-        await network.provider.send("evm_increaseTime", [86400]);
-        await network.provider.send("evm_mine");
-
-        const commitments: string[] = [];
-        const voteCount = 2;
-
-        for (let i = 0; i < voteCount; i += 1) {
-            const choice = i % 3;
-            const nonce = i + 1;
-            const commitment = await makeCommitment(voteAddress, proposal, validators[i].address, choice, nonce);
-            const signature = await signCommitment(voteManager, proposal, validators[i].address, commitment);
-
-            commitments.push(commitment);
-
-            const ballotVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
-            await ballotVote.submitBallot(proposal, commitment, signature);
-        }
-
-        await expect(voteraVote.getBallotAt(proposal, 0)).to.be.revertedWith("E004");
+        await expect(voteraVote.getBallot(proposal, validators[0].address)).to.be.revertedWith("E004");
     });
 
     it("revealBallot", async () => {
@@ -734,6 +1293,7 @@ describe("VoteraVote", () => {
             commitments.push(commitment);
         }
 
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -764,7 +1324,8 @@ describe("VoteraVote", () => {
         await voteraVote.revealBallot(proposal, keys, choices, nonces);
 
         for (let i = 0; i < voterCount; i += 1) {
-            const ballot = await voteraVote.getBallotAt(proposal, i);
+            const ballotAddr = await voteraVote.getBallotAt(proposal, i);
+            const ballot = await voteraVote.getBallot(proposal, ballotAddr);
             expect(ballot.key).equal(validators[i].address);
             expect(ballot.choice).equal(BigNumber.from(choices[i]));
             expect(ballot.nonce).equal(BigNumber.from(nonces[i]));
@@ -804,6 +1365,7 @@ describe("VoteraVote", () => {
 
         await expect(voteraVote.revealBallot(InvalidProposal, keys, choices, nonces)).to.be.revertedWith("E001"); // not found proposal
 
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -868,17 +1430,35 @@ describe("VoteraVote", () => {
             commitments.push(commitment);
         }
 
+        await createFundVote();
+        // state = CREATED
         await expect(voteraVote.revealBallot(proposal, keys, choices, nonces)).to.be.revertedWith("E002"); // call without setupVoteInfo
 
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        // state = SETTING
+        await expect(voteraVote.revealBallot(proposal, keys, choices, nonces)).to.be.revertedWith("E002"); // call without setupVoteInfo
+
         await voteraVote.addValidators(
             proposal,
             validators.map((v) => v.address),
             true
         );
+        // state = ASSESSING
+        await expect(voteraVote.revealBallot(proposal, keys, choices, nonces)).to.be.revertedWith("E002"); // call without setupVoteInfo
+
+        for (let i = 0; i < validators.length; i += 1) {
+            const assessVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            await assessVote.submitAssess(proposal, [10, 10, 10, 10, 10]);
+        }
+
+        // wait until startAssess
+        await network.provider.send("evm_increaseTime", [15000]);
+        await network.provider.send("evm_mine");
+
+        await voteraVote.countAssess(proposal);
 
         // wait until startTime
-        await network.provider.send("evm_increaseTime", [86400]);
+        await network.provider.send("evm_increaseTime", [86400 - 15000]);
         await network.provider.send("evm_mine");
 
         for (let i = 0; i < voterCount; i += 1) {
@@ -901,7 +1481,7 @@ describe("VoteraVote", () => {
 
         await voteraVote.countVote(proposal);
 
-        // already called countVote
+        // state = FINISHED
         await expect(voteraVote.revealBallot(proposal, keys, choices, nonces)).to.be.revertedWith("E002");
     });
 
@@ -923,6 +1503,7 @@ describe("VoteraVote", () => {
             commitments.push(commitment);
         }
 
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -938,6 +1519,7 @@ describe("VoteraVote", () => {
     });
 
     it("countVote&getVoteResult", async () => {
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -993,6 +1575,7 @@ describe("VoteraVote", () => {
     });
 
     it("countVote&getVoteResult - no voter", async () => {
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -1034,17 +1617,35 @@ describe("VoteraVote", () => {
     });
 
     it("countVote: E002 - not initialized && duplicated call", async () => {
+        await createFundVote();
+        // state = CREATED
         await expect(voteraVote.countVote(proposal)).to.be.revertedWith("E002"); // not initialized
 
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        // state = SETTING
+        await expect(voteraVote.countVote(proposal)).to.be.revertedWith("E002"); // not initialized
         await voteraVote.addValidators(
             proposal,
             validators.map((v) => v.address),
             true
         );
 
+        // state = ASSESSING
+        await expect(voteraVote.countVote(proposal)).to.be.revertedWith("E002"); // not initialized
+
+        for (let i = 0; i < validators.length; i += 1) {
+            const assessVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            await assessVote.submitAssess(proposal, [10, 10, 10, 10, 10]);
+        }
+
+        // wait until startAssess
+        await network.provider.send("evm_increaseTime", [15000]);
+        await network.provider.send("evm_mine");
+
+        await voteraVote.countAssess(proposal);
+
         // wait until startTime
-        await network.provider.send("evm_increaseTime", [86400]);
+        await network.provider.send("evm_increaseTime", [86400 - 15000]);
         await network.provider.send("evm_mine");
 
         const voterCount = 5;
@@ -1083,10 +1684,12 @@ describe("VoteraVote", () => {
 
         await voteraVote.countVote(proposal);
 
+        // state = FINISHED
         await expect(voteraVote.countVote(proposal)).to.be.revertedWith("E002"); // duplicated call
     });
 
     it("countVote: E002 - not revealed", async () => {
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -1142,6 +1745,7 @@ describe("VoteraVote", () => {
     });
 
     it("countVote: E004", async () => {
+        await createSystemVote();
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
         await voteraVote.addValidators(
             proposal,
@@ -1157,19 +1761,38 @@ describe("VoteraVote", () => {
     });
 
     it("getVoteResult: E002", async () => {
+        await createFundVote();
+        // state = CREATED
         await expect(voteraVote.getVoteResult(proposal)).to.be.revertedWith("E002"); // call without setupVoteInfo
 
         await voteraVote.setupVoteInfo(proposal, startTime, endTime, openTime, "info");
+        // state = SETTING
+        await expect(voteraVote.getVoteResult(proposal)).to.be.revertedWith("E002"); // call without setupVoteInfo
+
         await voteraVote.addValidators(
             proposal,
             validators.map((v) => v.address),
             true
         );
+        // state = ASSESSING
+        await expect(voteraVote.getVoteResult(proposal)).to.be.revertedWith("E002"); // call without setupVoteInfo
 
-        await expect(voteraVote.getVoteResult(proposal)).to.be.revertedWith("E002");
+        for (let i = 0; i < validators.length; i += 1) {
+            const assessVote = VoteraVoteFactory.connect(voteAddress, validators[i]);
+            await assessVote.submitAssess(proposal, [10, 10, 10, 10, 10]);
+        }
+
+        // wait until startAssess
+        await network.provider.send("evm_increaseTime", [15000]);
+        await network.provider.send("evm_mine");
+
+        await voteraVote.countAssess(proposal);
+
+        // state = RUNNING
+        await expect(voteraVote.getVoteResult(proposal)).to.be.revertedWith("E002"); // call without setupVoteInfo
 
         // wait until startTime
-        await network.provider.send("evm_increaseTime", [86400]);
+        await network.provider.send("evm_increaseTime", [86400 - 15000]);
         await network.provider.send("evm_mine");
 
         // wait until endTime
@@ -1183,5 +1806,10 @@ describe("VoteraVote", () => {
         await network.provider.send("evm_mine");
 
         await expect(voteraVote.getVoteResult(proposal)).to.be.revertedWith("E002"); // call without countVote
+
+        await voteraVote.countVote(proposal);
+
+        const voteResult = await voteraVote.getVoteResult(proposal);
+        expect(voteResult).to.eql(Array(3).fill(BigNumber.from(0)));
     });
 });

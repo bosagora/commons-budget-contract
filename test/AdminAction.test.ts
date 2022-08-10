@@ -63,10 +63,7 @@ describe("Test actions by contract owner", () => {
         const validatorBudget = CommonsBudgetFactory.connect(contract.address, validators[0]);
         const makeProposalTx = await validatorBudget.createSystemProposal(
             proposal,
-            title,
-            startTime,
-            endTime,
-            docHash,
+            { start: startTime, end: endTime, startAssess: 0, endAssess: 0, docHash, amount: 0, title },
             signProposal,
             { value: basicFee }
         );
@@ -106,10 +103,7 @@ describe("Test actions by contract owner", () => {
         const validatorBudget = CommonsBudgetFactory.connect(contract.address, validators[0]);
         const makeProposalTx = await validatorBudget.createSystemProposal(
             proposal,
-            title,
-            startTime,
-            endTime,
-            docHash,
+            { start: startTime, end: endTime, startAssess: 0, endAssess: 0, docHash, amount: 0, title },
             signProposal,
             { value: basicFee }
         );
@@ -142,7 +136,12 @@ describe("Test actions by contract owner", () => {
 
         // get validators' balances to be compared with their balances after paying fees
         const prevBalances = new Map<string, BigNumber>();
-        const val_addresses = await voteraVote.getValidators(proposal);
+        const val_addresses: string[] = [];
+        const validatorCount = await voteraVote.getValidatorCount(proposal);
+        const val_address_length = validatorCount.toNumber();
+        for (let i = 0; i < val_address_length; i += 1) {
+            val_addresses.push(await voteraVote.getValidatorAt(proposal, i));
+        }
         expect(val_addresses.length).equals(manyValidators.length);
         for (const address of val_addresses) {
             prevBalances.set(address, await provider.getBalance(address));
