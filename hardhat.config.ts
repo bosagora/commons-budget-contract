@@ -86,6 +86,13 @@ const config: HardhatUserConfig = {
             gas: 2100000,
             gasPrice: 8000000000,
         },
+        localnet: {
+            url: "localhost:8545",
+            chainId: 3426,
+            accounts: [process.env.ADMIN_KEY || "", process.env.USER_KEY || ""],
+            gas: 2100000,
+            gasPrice: 8000000000,
+        },
     },
     gasReporter: {
         enabled: process.env.REPORT_GAS !== undefined,
