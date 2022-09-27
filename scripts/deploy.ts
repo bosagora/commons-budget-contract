@@ -23,20 +23,7 @@ async function main() {
     await commonsBudget.deployed();
     const blockDeployed = await ethers.provider.getBlock("latest");
 
-    const voteManager = new Wallet(process.env.VOTE_KEY || "");
-    const voteManagerSigner = new NonceManager(new GasPriceManager(provider.getSigner(admin.address)));
-    const voteraVote = await voteraVoteFactory.connect(voteManagerSigner).deploy();
-    await voteraVote.deployed();
-    const blockDeployed2 = await ethers.provider.getBlock("latest");
-
-    await commonsBudget.changeVoteParam(voteManager.address, voteraVote.address);
-    await voteraVote.changeCommonBudgetContract(commonsBudget.address);
-
     console.log("commonsBudget - deployed to:", commonsBudget.address, ", block: ", blockDeployed.number);
-    console.log("voteraVote    - deployed to:", voteraVote.address, ", block: ", blockDeployed2.number);
-    if (!process.env.VOTE_KEY) {
-        console.log("voteraVote.manager - privateKey:", voteManager.privateKey);
-    }
 }
 
 // We recommend this pattern to be able to use async/await everywhere
