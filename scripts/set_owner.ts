@@ -12,9 +12,9 @@ async function main() {
     const curOwnerSigner = new NonceManager(new GasPriceManager(provider.getSigner(curOwner.address)));
 
     const issued = await issuedFactory.attach(process.env.ISSUED_CONTRACT || "");
-    const newOwner = new Wallet(process.env.NEW_OWNER || "");
-    await issued.connect(curOwnerSigner).setOwner(newOwner.address);
-    console.log("New owner set to IssuedContract:", newOwner.address);
+    const newOwner = process.env.NEW_OWNER || "";
+    await issued.connect(curOwnerSigner).setOwner(newOwner);
+    console.log("New owner set to IssuedContract:", newOwner);
 }
 
 // We recommend this pattern to be able to use async/await everywhere
