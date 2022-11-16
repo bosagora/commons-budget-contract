@@ -57,6 +57,8 @@ async function main() {
     // Values related to the CommonsBudget policy
     console.log("========== CommonsBudget Policy ==========");
     console.log(
+        "Contract owner:",
+        await commonsBudget.owner(),
         "fundProposalFeePermil:",
         await storageContract.fundProposalFeePermil(),
         ", systemProposalFee:",
@@ -124,6 +126,8 @@ async function main() {
         default:
             console.log("Proposal result: ABNORMAL STATE");
     }
+    console.log("Withdrawal permission state:", proposalData.fundingAllowed);
+    console.log("Withdrawal state:", proposalData.fundWithdrawn);
 
     // votera vote information
     const voteInfo = await voteraVote.voteInfos(proposalID);
