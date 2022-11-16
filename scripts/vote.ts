@@ -19,6 +19,7 @@ import { GasPriceManager } from "../utils/GasPriceManager";
 import { NonceManager } from "@ethersproject/experimental";
 
 import { getSigners, getValidators, generateVoteData } from "../utils/CommonUtil";
+import { delay } from "@nomiclabs/hardhat-etherscan/dist/src/etherscan/EtherscanService";
 
 const AddressZero = "0x0000000000000000000000000000000000000000";
 const InvalidProposal = "0x43d26d775ef3a282483394ce041a2757fbf700c9cf86accc6f0ce410accf123f";
@@ -97,7 +98,7 @@ async function main() {
         const ballotVote = VoteraVoteFactory.connect(voteraVote.address, valSigner);
         submitBallotTx = await ballotVote.submitBallot(proposalID, commitment, signature);
 
-        // TODO: Need to sleep
+        await delay(10);
     }
 
     if (submitBallotTx) {
