@@ -2,7 +2,8 @@
   "name": "commons-budget-contract",
   "version": "1.0.0",
   "description": "Commons Budget Contract",
-  "main": "",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "directories": {
     "test": "test"
   },
@@ -11,7 +12,8 @@
     "build": "node_modules/.bin/hardhat compile",
     "test": "node_modules/.bin/hardhat test",
     "test:CommonsBudget": "NODE_ENV=test node_modules/.bin/hardhat test test/CommonsBudget.test.ts",
-    "prettier": "node_modules/.bin/prettier --write --config .prettierrc 'contracts/**/*.sol' 'test/**/*.ts' 'utils/**/*.ts' 'scripts/**/*.ts'"
+    "prettier": "node_modules/.bin/prettier --write --config .prettierrc 'contracts/**/*.sol' 'test/**/*.ts' 'utils/**/*.ts' 'scripts/**/*.ts'",
+    "package": "tsc --target es2018 --module commonjs --strict true --esModuleInterop true --outDir dist --declaration true --resolveJsonModule true typechain-types/*.ts"
   },
   "repository": {
     "type": "git+https://github.com/zeroone-boa/commons-budget-contract.git",
