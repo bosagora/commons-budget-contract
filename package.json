@@ -16,13 +16,13 @@
     "package": "tsc --target es2018 --module commonjs --strict true --esModuleInterop true --outDir dist --declaration true --resolveJsonModule true typechain-types/*.ts"
   },
   "repository": {
-    "type": "git+https://github.com/zeroone-boa/commons-budget-contract.git",
+    "type": "git+https://github.com/bosagora/commons-budget-contract.git",
     "url": ""
   },
-  "author": "",
+  "author": "BOSAGORA Foundation",
   "license": "MIT",
   "bugs": {
-    "url": "https://github.com/zeroone-boa/commons-budget-contract/issues"
+    "url": "https://github.com/bosagora/commons-budget-contract/issues"
   },
   "homepage": "",
   "devDependencies": {
