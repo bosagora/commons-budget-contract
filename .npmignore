@@ -1,4 +1,15 @@
-hardhat.config.ts
+.github
+.idea
+cache
+artifacts
+env
+node_modules
 scripts
 test
+typechain-types
+.prettierignore
+.prettierrc
+.solhint.json
+.solhintignore
 
+hardhat.config.ts
