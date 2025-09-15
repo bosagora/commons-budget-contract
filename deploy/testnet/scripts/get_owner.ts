@@ -1,7 +1,7 @@
 import { NonceManager } from "@ethersproject/experimental";
 import { Wallet } from "ethers";
 import { ethers } from "hardhat";
-import { GasPriceManager } from "../utils/GasPriceManager";
+import { GasPriceManager } from "../../../src/utils/GasPriceManager";
 
 async function main() {
     const issuedFactory = await ethers.getContractFactory("IssuedContract");

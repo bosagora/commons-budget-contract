@@ -1,43 +1,107 @@
-import * as dotenv from "dotenv";
-import { HardhatUserConfig, task } from "hardhat/config";
-import { HardhatNetworkAccountUserConfig } from "hardhat/types/config";
-import { utils, Wallet } from "ethers";
+import "@nomicfoundation/hardhat-ledger";
+import "@nomiclabs/hardhat-ethers";
 import "@nomiclabs/hardhat-waffle";
+import "@typechain/hardhat";
 import "hardhat-gas-reporter";
 
-dotenv.config({ path: "env/.env" });
+import * as dotenv from "dotenv";
+import { Wallet } from "ethers";
 
-// This is a sample Hardhat task. To learn how to create your own go to
-// https://hardhat.org/guides/create-task.html
-task("accounts", "Prints the list of accounts", async (taskArgs, hre) => {
-    const accounts = await hre.ethers.getSigners();
-
-    for (const account of accounts) {
-        console.log(account.address);
-    }
-});
-
-function getAccounts() {
-    const accounts: HardhatNetworkAccountUserConfig[] = [];
-    const defaultBalance = utils.parseEther("2000000").toString();
-
-    const n = 10;
-    for (let i = 0; i < n; ++i) {
-        accounts.push({
-            privateKey: Wallet.createRandom().privateKey,
-            balance: defaultBalance,
-        });
-    }
-    accounts[0].privateKey = process.env.ADMIN_KEY || "";
-    accounts[1].privateKey = process.env.USER_KEY || "";
-
-    return accounts;
+const env_network = process.env.ENV_NETWORK || "";
+if (env_network !== "") {
+    const envFileName = `env/.${env_network}.env`;
+    console.log(`ENV FileName ${envFileName}`);
+    dotenv.config({ path: envFileName });
+} else {
+    const envFileName = `env/.env`;
+    console.log(`ENV FileName ${envFileName}`);
+    dotenv.config({ path: envFileName });
 }
 
-// You need to export an object to set up your config
-// Go to https://hardhat.org/config/ to learn more
+console.log(`env_network: ${env_network}`);
+console.log(`MAINNET_URL: ${process.env.MAINNET_URL}`);
+console.log(`TESTNET_URL: ${process.env.TESTNET_URL}`);
 
-const config: HardhatUserConfig = {
+import { HardhatAccount } from "./src/HardhatAccount";
+
+function getAccounts() {
+    if (HardhatAccount.keys.length !== 0) return HardhatAccount.keys;
+
+    const accounts: string[] = [];
+    const reg_bytes64: RegExp = /^(0x)[0-9a-f]{64}$/i;
+    if (
+        process.env.ADMIN_KEY !== undefined &&
+        process.env.ADMIN_KEY.trim() !== "" &&
+        reg_bytes64.test(process.env.ADMIN_KEY)
+    ) {
+        accounts.push(process.env.ADMIN_KEY);
+    } else {
+        process.env.ADMIN_KEY = Wallet.createRandom().privateKey;
+        accounts.push(process.env.ADMIN_KEY);
+    }
+
+    if (
+        process.env.USER_KEY !== undefined &&
+        process.env.USER_KEY.trim() !== "" &&
+        reg_bytes64.test(process.env.USER_KEY)
+    ) {
+        accounts.push(process.env.USER_KEY);
+    } else {
+        process.env.USER_KEY = Wallet.createRandom().privateKey;
+        accounts.push(process.env.USER_KEY);
+    }
+
+    while (accounts.length < 16) {
+        accounts.push(Wallet.createRandom().privateKey);
+    }
+
+    for (const account of accounts) {
+        HardhatAccount.keys.push(account);
+    }
+
+    return HardhatAccount.keys;
+}
+
+function getTestAccounts() {
+    const defaultBalance = "2000000000000000000000000";
+    const acc = getAccounts();
+    return acc.map((m) => {
+        return {
+            privateKey: m,
+            balance: defaultBalance,
+        };
+    });
+}
+
+function getLedgerAccounts() {
+    if (HardhatAccount.ledgerAddress.length !== 0) return HardhatAccount.ledgerAddress;
+
+    const addresses: string[] = [];
+    const reg_bytes64: RegExp = /^(0x)[0-9a-f]{40}$/i;
+
+    if (
+        process.env.ADMIN_ADDRESS !== undefined &&
+        process.env.ADMIN_ADDRESS.trim() !== "" &&
+        reg_bytes64.test(process.env.ADMIN_ADDRESS)
+    ) {
+        addresses.push(process.env.ADMIN_ADDRESS);
+    }
+
+    if (
+        process.env.USER_ADDRESS !== undefined &&
+        process.env.USER_ADDRESS.trim() !== "" &&
+        reg_bytes64.test(process.env.USER_ADDRESS)
+    ) {
+        addresses.push(process.env.USER_ADDRESS);
+    }
+
+    for (const account of addresses) {
+        HardhatAccount.ledgerAddress.push(account);
+    }
+    return HardhatAccount.ledgerAddress;
+}
+
+const config = {
     solidity: {
         compilers: [
             {
@@ -53,32 +117,25 @@ const config: HardhatUserConfig = {
     },
     networks: {
         hardhat: {
-            accounts: getAccounts(),
+            accounts: getTestAccounts(),
+            gas: 8000000,
+            gasPrice: 8000000000,
+            blockGasLimit: 8000000,
         },
         mainnet: {
             url: process.env.MAINNET_URL || "",
             chainId: 2151,
-            accounts: [process.env.ADMIN_KEY || "", process.env.USER_KEY || ""],
+            ledgerAccounts: getLedgerAccounts(),
         },
         testnet: {
             url: process.env.TESTNET_URL || "",
             chainId: 2019,
-            accounts: [process.env.ADMIN_KEY || "", process.env.USER_KEY || ""],
+            ledgerAccounts: getLedgerAccounts(),
         },
-        votera: {
-            url: process.env.VOTERA_URL || "",
-            chainId: 34560,
-            accounts: [process.env.ADMIN_KEY || "", process.env.USER_KEY || ""],
-        },
-        devnet: {
-            url: process.env.DEVNET_URL || "",
-            chainId: 2155,
-            accounts: [process.env.ADMIN_KEY || "", process.env.USER_KEY || ""],
-        },
-        localnet: {
-            url: process.env.LOCALNET_URL || "",
-            chainId: 34559,
-            accounts: [process.env.ADMIN_KEY || "", process.env.USER_KEY || ""],
+        standalone: {
+            url: process.env.URL_STANDALONE || "",
+            chainId: 24680,
+            ledgerAccounts: getLedgerAccounts(),
         },
     },
     gasReporter: {

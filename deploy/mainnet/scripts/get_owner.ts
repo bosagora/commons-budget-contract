@@ -1,18 +1,13 @@
 import { NonceManager } from "@ethersproject/experimental";
 import { Wallet } from "ethers";
 import { ethers } from "hardhat";
-import { GasPriceManager } from "../utils/GasPriceManager";
+import { GasPriceManager } from "../../../src/utils/GasPriceManager";
 
 async function main() {
     const issuedFactory = await ethers.getContractFactory("IssuedContract");
-    const provider = ethers.provider;
-
-    const admin = new Wallet(process.env.ADMIN_KEY || "");
-    const adminSigner = new NonceManager(new GasPriceManager(provider.getSigner(admin.address)));
-
     const issued = await issuedFactory.attach(process.env.ISSUED_CONTRACT || "");
-    const commonsBudgetAddress = await issued.connect(adminSigner).getCommonsBudgetAddress();
-    console.log("CommonsBudget address:", commonsBudgetAddress);
+    const curOwnerAddress = await issued.getOwner();
+    console.log("Current owner of IssuedContract:", curOwnerAddress);
 }
 
 // We recommend this pattern to be able to use async/await everywhere
