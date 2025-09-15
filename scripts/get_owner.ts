@@ -5,13 +5,8 @@ import { GasPriceManager } from "../utils/GasPriceManager";
 
 async function main() {
     const issuedFactory = await ethers.getContractFactory("IssuedContract");
-    const provider = ethers.provider;
-
-    const admin = new Wallet(process.env.ADMIN_KEY || "");
-    const adminSigner = new NonceManager(new GasPriceManager(provider.getSigner(admin.address)));
-
     const issued = await issuedFactory.attach(process.env.ISSUED_CONTRACT || "");
-    const curOwnerAddress = await issued.connect(adminSigner).getOwner();
+    const curOwnerAddress = await issued.getOwner();
     console.log("Current owner of IssuedContract:", curOwnerAddress);
 }
 
