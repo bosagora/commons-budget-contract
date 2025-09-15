@@ -13,14 +13,14 @@ async function main() {
 
     const issued = await issuedFactory.attach(process.env.ISSUED_CONTRACT || "");
     const commonsBudget = await commonsBudgetFactory.attach(process.env.COMMONS_BUDGET_CONTRACT || "");
-    const admin = new Wallet(process.env.ADMIN_KEY || "");
-    const user = new Wallet(process.env.USER_KEY || "");
+    const adminAddress = process.env.ADMIN_ADDRESS || "";
+    const userAddress = process.env.USER_ADDRESS || "";
 
     const cent = BigNumber.from(10).pow(18);
     const issuedBalance = BigNumber.from(await ethers.provider.getBalance(issued.address));
     const commonsBalance = BigNumber.from(await ethers.provider.getBalance(commonsBudget.address));
-    const adminBalance = BigNumber.from(await ethers.provider.getBalance(admin.address));
-    const userBalance = BigNumber.from(await ethers.provider.getBalance(user.address));
+    const adminBalance = BigNumber.from(await ethers.provider.getBalance(adminAddress));
+    const userBalance = BigNumber.from(await ethers.provider.getBalance(userAddress));
     console.log("========== Balance: {BOA} . {CENT} ==========");
 
     // IssuedContract balance
@@ -46,7 +46,7 @@ async function main() {
     // Admin balance
     console.log(
         "Admin Balance(",
-        admin.address,
+        adminAddress,
         ") :",
         adminBalance.div(cent).toString(),
         ".",
@@ -56,7 +56,7 @@ async function main() {
     // User balance
     console.log(
         "User Balance(",
-        user.address,
+        userAddress,
         ") :",
         userBalance.div(cent).toString(),
         ".",

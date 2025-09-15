@@ -10,3 +10,6 @@ cache
 artifacts
 
 .idea
+
+/deploy/mainnet/network/chain/chain/
+/deploy/testnet/network/chain/chain/
